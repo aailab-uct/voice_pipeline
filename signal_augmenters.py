@@ -1,4 +1,5 @@
 """Signal-level augmenters."""
+
 import numpy as np
 from sklearn.base import BaseEstimator, TransformerMixin
 
@@ -11,8 +12,15 @@ class RawAugmenter(BaseEstimator, TransformerMixin):
 
     Shape-preserving: does NOT change number of samples.
     """
-    def __init__(self, enabled=True, noise_std=0.005,
-                 gain_min=0.8, gain_max=1.2, random_state=None):
+
+    def __init__(
+        self,
+        enabled=True,
+        noise_std=0.005,
+        gain_min=0.8,
+        gain_max=1.2,
+        random_state=None,
+    ):
         self.enabled = enabled
         self.noise_std = noise_std
         self.gain_min = gain_min
@@ -20,6 +28,7 @@ class RawAugmenter(BaseEstimator, TransformerMixin):
         self.random_state = random_state
 
     def fit(self, X, y=None):
+        del X, y  # unused
         self.rng_ = np.random.RandomState(self.random_state)
         return self
 

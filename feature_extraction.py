@@ -1,13 +1,16 @@
 """Feature extraction transformers."""
+
 import numpy as np
 import librosa
 
 from sklearn.base import BaseEstimator, TransformerMixin
 
+
 class FeatureExtractor(BaseEstimator, TransformerMixin):
     """
     Base class for feature extractors.
     """
+
     def __init__(self, enabled: bool):
         """
         Base class for feature extractors.
@@ -18,7 +21,7 @@ class FeatureExtractor(BaseEstimator, TransformerMixin):
         super().__init__()
         self.enabled = enabled
 
-    def fit(self, X: np.ndarray, y: np.ndarray|None=None):
+    def fit(self, X: np.ndarray, y: np.ndarray | None = None):
         """
         Fit method. Only checks input shape.
 
@@ -28,10 +31,11 @@ class FeatureExtractor(BaseEstimator, TransformerMixin):
         :type y: np.ndarray | None
         :raises: AssertionError
         """
-        assert X[0,0].ndim == 1, "First column must be waveform"
+        assert X[0, 0].ndim == 1, "First column must be waveform"
         assert X.shape[0] > 0, "Input X must have at least one sample"
-        assert X.shape[0] == (y.shape[0] if y is not None else X.shape[0]), \
-            "X and y must have the same number of samples"
+        assert X.shape[0] == (
+            y.shape[0] if y is not None else X.shape[0]
+        ), "X and y must have the same number of samples"
         return self
 
     def _extract_feature(self, x: np.ndarray) -> np.ndarray:
@@ -64,27 +68,28 @@ class FeatureExtractor(BaseEstimator, TransformerMixin):
         return np.array(np.vstack(X_out), dtype=object)
 
 
-
 class DropSignalColumn(BaseEstimator, TransformerMixin):
     """
     Drops the first column (waveform) from the input data.
     This should be used after feature extraction.
     """
-    def __init__(self):
-        super().__init__()
 
     def fit(self, X, y=None):
-        assert X[0,0].ndim == 1, "First column must be waveform"
+        assert X[0, 0].ndim == 1, "First column must be waveform"
+        if y is not None:
+            assert X.shape[0] == y.shape[0], "X and y must have the same number of samples"
         return self
 
     def transform(self, X):
-        return np.asarray(X[:,1:], dtype=np.float32)
+        return np.asarray(X[:, 1:], dtype=np.float32)
+
 
 class MFCCExtractor(FeatureExtractor):
     """
     Extracts MFCC features: mean and std over time for each coefficient.
     Output: 2 * n_mfcc features per sample.
     """
+
     def __init__(self, sr=16000, n_mfcc=20, enabled=True):
         super().__init__(enabled=enabled)
         self.sr = sr
