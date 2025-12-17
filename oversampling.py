@@ -31,29 +31,17 @@ def _compute_number_per_class(
     if sampling_strategy == "auto":  # balance all classes to the max count
         max_count = max(counts)
         new_counts = {cls: max_count for cls in classes}
-    elif isinstance(sampling_strategy, dict) or isinstance(
-        sampling_strategy, list
-    ):  # specific counts per class
-        values = (
-            sampling_strategy.values()
-            if isinstance(sampling_strategy, dict)
-            else sampling_strategy
-        )
-        if all(type(v) == int for v in values):  # specific counts
+    elif isinstance(sampling_strategy, dict) or isinstance(sampling_strategy, list):  # specific counts per class
+        values = sampling_strategy.values() if isinstance(sampling_strategy, dict) else sampling_strategy
+        if all(isinstance(v, int) for v in values):  # specific counts
             new_counts = {cls: sampling_strategy[cls] for cls in classes}
-        elif all(
-            type(v) == float for v in values
-        ):  # specific multipliers for each class
-            new_counts = {
-                cls: int(old_counts[cls] * sampling_strategy[cls]) for cls in classes
-            }
+        elif all(isinstance(v, float) for v in values):  # specific multipliers for each class
+            new_counts = {cls: int(old_counts[cls] * sampling_strategy[cls]) for cls in classes}
         else:
             raise ValueError("sampling_strategy values must be all int or all float")
     elif isinstance(sampling_strategy, int):  # specific count for all classes
         new_counts = {cls: sampling_strategy for cls in classes}
-    elif isinstance(
-        sampling_strategy, float
-    ):  #  multiply max class count by float for all classes
+    elif isinstance(sampling_strategy, float):  #  multiply max class count by float for all classes
         new_counts = {cls: int(max(counts) * sampling_strategy) for cls in classes}
     else:
         raise ValueError("String sampling_strategy not supported")
@@ -71,6 +59,7 @@ class TunableBaseSampler(BaseSampler):
         enabled: bool,
         additional_group_classes: list | int | None,
         random_state: None | int,
+        **kwargs,
     ) -> None:
         """
         :param enabled: Whether to enable this sampler
@@ -80,6 +69,7 @@ class TunableBaseSampler(BaseSampler):
         :param random_state: Random seed for reproducibility
         :type random_state: None | int
         """
+        del kwargs  # unused
         super().__init__()
         self.random_state = random_state
         self.enabled = enabled
@@ -94,9 +84,7 @@ class TunableBaseSampler(BaseSampler):
         else:
             raise ValueError("additional_group_classes must be None or dict")
 
-    def _fit_resample(  # type: ignore
-        self, X: np.ndarray, y: np.ndarray, **params
-    ) -> tuple[np.ndarray, np.ndarray]:
+    def _fit_resample(self, X: np.ndarray, y: np.ndarray, **params) -> tuple[np.ndarray, np.ndarray]:  # type: ignore
         if not self.enabled:
             return X, y
 
@@ -108,27 +96,26 @@ class TunableBaseSampler(BaseSampler):
             class_offset = np.max(classes) + 1  # used to offset class labels
             map_unique_to_class = {
                 val: idx * class_offset for idx, val in enumerate(unique_values)
-            }  # mapping from unique value to new class label - this ensures that even float classes are handled as separate classes
+            }  # mapping from unique value to new class label
+            # this ensures that even float classes are handled as separate classes
             mapped_classes = np.array(
                 [map_unique_to_class[val] for val in X_col]
             )  # map original values to new class labels
-            classes = (
-                classes + mapped_classes
-            )  # combine original classes with new mapped classes
+            classes = classes + mapped_classes  # combine original classes with new mapped classes
 
         X_new, y_new = self._resample(X, y, classes, **params)
         return X_new, y_new
 
-    def _resample(
-        self, X: np.ndarray, y: np.ndarray, classes: np.ndarray, **params
-    ) -> tuple[np.ndarray, np.ndarray]:
+    def _resample(self, X: np.ndarray, y: np.ndarray, classes: np.ndarray, **params) -> tuple[np.ndarray, np.ndarray]:
         """To be implemented in subclasses."""
         raise NotImplementedError("Subclasses should implement this method.")
 
 
 class RandomCopySampler(TunableBaseSampler):
     """Custom oversampler that randomly duplicates samples to match desired output.
-    All samples from the resampled class have aproximately equal representation in the output - count of each sample differs by at most 1.
+
+    All samples from the resampled class have aproximately equal representation in the output - count of each sample
+    differs by at most 1.
     """
 
     # This is needed for sklearn compatibility - defines valid parameters and their types
@@ -136,12 +123,12 @@ class RandomCopySampler(TunableBaseSampler):
         "enabled": ["boolean"],
         "sampling_strategy": [
             "array-like",
-            Interval(Real, None, None, closed="neither"), # type: ignore[type-var]
-            StrOptions({"auto"}), # type: ignore[type-var]
+            Interval(Real, None, None, closed="neither"),  # type: ignore[type-var]
+            StrOptions({"auto"}),  # type: ignore[type-var]
         ],
         "additional_group_classes": [
             "array-like",
-            Interval(Integral, 0, None, closed="left"), # type: ignore[type-var]
+            Interval(Integral, 0, None, closed="left"),  # type: ignore[type-var]
             None,
         ],
         "random_state": ["random_state"],
@@ -153,9 +140,13 @@ class RandomCopySampler(TunableBaseSampler):
         sampling_strategy: list | int | float | dict | str = "auto",
         additional_group_classes: list | int | None = None,
         random_state: None | int = None,
+        **kwargs,
     ) -> None:
         """
-        TODO: complete docstring
+        Custom oversampler that randomly duplicates samples to match desired output.
+
+        All samples from the resampled class have aproximately equal representation in the output - count of each sample
+        differs by at most 1.
 
         :param enabled: Whether to enable this sampler
         :type enabled: bool
@@ -172,14 +163,13 @@ class RandomCopySampler(TunableBaseSampler):
         :type random_state: None | int
         :raises: ValueError
         """
+        del kwargs  # unused
         super().__init__(
             enabled=enabled,
             additional_group_classes=additional_group_classes,
             random_state=random_state,
         )
-        self.sampling_strategy = (
-            sampling_strategy  # this will be processed in _resample
-        )
+        self.sampling_strategy = sampling_strategy  # this will be processed in _resample
 
     def _resample(
         self,
@@ -191,8 +181,8 @@ class RandomCopySampler(TunableBaseSampler):
         del params  # unused
 
         new_counts = _compute_number_per_class(classes)
-        new_X = []
-        new_y = []
+        X_new = []
+        y_new = []
 
         # Oversample each class to the desired count
         for cls, target in new_counts.items():
@@ -204,15 +194,74 @@ class RandomCopySampler(TunableBaseSampler):
             multiples = target // current_number
             remainder = target % current_number
             for _ in range(multiples):  # add full copies
-                new_X.append(X_cls)
-                new_y.append(y_cls)
-            samples = self.rng.choice(  # add remaining samples
-                current_number, size=remainder, replace=False
-            )
-            new_X.append(X_cls[samples])
-            new_y.append(y_cls[samples])
-        X_res = np.vstack(new_X)
-        y_res = np.hstack(new_y)
+                X_new.append(X_cls)
+                y_new.append(y_cls)
+            samples = self.rng.choice(current_number, size=remainder, replace=False)  # add remaining samples
+            X_new.append(X_cls[samples])
+            y_new.append(y_cls[samples])
+        X_res = np.vstack(X_new)
+        y_res = np.hstack(y_new)
+        # Shuffle the resampled dataset
+        perm = self.rng.permutation(X_res.shape[0])
+        return X_res[perm], y_res[perm]
+
+
+class SMOTESampler(TunableBaseSampler, BaseSMOTE):  # type: ignore[misc]
+    """Custom SMOTE oversampler that generates only artificial samples without copying existing ones."""
+
+    _sampling_type = "over-sampling"
+
+    def __init__(
+        self,
+        enabled: bool = True,
+        sampling_strategy: list | int | float | dict | str = "auto",
+        additional_group_classes: list | int | None = None,
+        random_state: None | int = None,
+        artificial_only: bool = False,
+        **kwargs,
+    ):
+        super().__init__(
+            enabled=enabled,
+            additional_group_classes=additional_group_classes,
+            random_state=random_state,
+            k_neighbors=kwargs.get("k_neighbors", 5),
+        )
+        del kwargs  # unused
+
+        self.sampling_strategy = sampling_strategy
+        self.artificial_only = artificial_only
+
+    def _resample(self, X: np.ndarray, y: np.ndarray, classes: np.ndarray, **params) -> tuple[np.ndarray, np.ndarray]:
+        del params
+        self._validate_estimator()  # this initializes the nn_k_ attribute
+
+        new_counts = _compute_number_per_class(classes, self.sampling_strategy)
+        X_new = [] if self.artificial_only else [X.copy()]
+        y_new = [] if self.artificial_only else [y.copy()]
+        for cls, target in new_counts.items():
+            n_samples = target - (0 if self.artificial_only else np.sum(y == cls))
+            if n_samples <= 0:
+                continue
+            cls_mask = classes == cls
+            X_cls = X[cls_mask]
+            y_cls = y[cls_mask]
+
+            self.nn_k_.fit(X_cls)  # fit nearest neighbors and retrieve neighbors so we can generate samples
+            nns = self.nn_k_.kneighbors(X_cls, return_distance=False)[:, 1:]  # type: ignore[attr-defined]
+
+            X_syn, y_syn = self._make_samples(
+                X_cls,
+                y.dtype,
+                y_cls[0],  # target label - this is different from the class label
+                X_cls,
+                nns,
+                n_samples,
+                1.0,
+            )  # generate synthetic samples
+            X_new.append(X_syn)
+            y_new.append(y_syn)
+        X_res = np.vstack(X_new)
+        y_res = np.hstack(y_new)
         # Shuffle the resampled dataset
         perm = self.rng.permutation(X_res.shape[0])
         return X_res[perm], y_res[perm]
