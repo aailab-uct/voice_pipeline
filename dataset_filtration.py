@@ -1,10 +1,14 @@
+"""
+Module for filtering dataset and building feature and label arrays.
+"""
+
 import csv
 from pathlib import Path
 
 import numpy as np
 import soundfile as sf
 from tqdm import tqdm
-
+import librosa
 
 # ============================================================
 # Paths
@@ -18,13 +22,16 @@ METADATA_CSV = Path("dataset/metadata.csv")
 # Public API
 # ============================================================
 
-def build_X_y_groups(
-    excluded_pathologies,
-    include_age=True,
-    include_sex=True,
-    allowed_vowels=None,
-    allowed_intonations=None,
-):
+
+def build_dataset(
+    excluded_pathologies: set[str] | None = None,
+    include_age: bool = True,
+    include_sex: bool = True,
+    allowed_vowels: set[str] | None = None,
+    allowed_intonations: set[str] | None = None,
+    selected_datasets: set[str] | None = None,
+    selected_fs: int | None = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Build X, y and groups for sklearn pipeline.
 
@@ -44,6 +51,10 @@ def build_X_y_groups(
         Povolené samohlásky (např. {"a", "i"}). None = bez filtru.
     allowed_intonations : set[str] or None
         Povolené intonace (např. {"n"}). None = bez filtru.
+    selected_datasets : set[str] or None
+        Povolené datasety (např. {"SVD", "VOICED"}). None
+    selected_fs : int or None
+        Pokud není None, přeresampluje audio na tuto vzorkovací frekvenci.
 
     Returns
     -------
@@ -54,7 +65,8 @@ def build_X_y_groups(
     groups : np.ndarray
         talkerID (pro GroupKFold).
     """
-
+    if excluded_pathologies is None:
+        excluded_pathologies = set()
     X = []
     y = []
     groups = []
@@ -77,20 +89,43 @@ def build_X_y_groups(
         if allowed_intonations is not None and row["intonation"] not in allowed_intonations:
             continue
 
-        wav_path = AUDIO_DIR / f"record_{row['id']}.wav"
-        if not wav_path.exists():
+        # --- filter dataset
+        if selected_datasets is not None and row["dataset"] not in selected_datasets:
             continue
 
-        signal, _ = sf.read(wav_path, dtype="float32")
+        # --- load audio
+        original_file = AUDIO_DIR / f"record_{row["id"]}.wav"
+        cached_file = AUDIO_DIR / f"record_{row["id"]}_{selected_fs}.wav" if selected_fs is not None else original_file
+        if cached_file.exists():
+            signal, fs = sf.read(cached_file, dtype="float32")
+        elif original_file.exists():
+            signal, fs = sf.read(original_file, dtype="float32")
+            if selected_fs is not None and fs != selected_fs:
+                signal = librosa.resample(signal, orig_sr=fs, target_sr=selected_fs, res_type="soxr_vhq")
+                fs = selected_fs
+                signal = signal.astype(np.float32)
+                sf.write(AUDIO_DIR / f"record_{row["id"]}_{selected_fs}.wav", data=signal, samplerate=selected_fs)
+        else:
+            print(f"Warning: audio file for record {row["id"]} not found, skipping.")
+            continue
+
+        # --- build feature vector
 
         features = [signal]
 
         if include_age:
-            age = int(row["age"]) if row["age"] else 0
+            age = int(row["age"]) if row["age"] else np.nan
             features.append(age)
 
         if include_sex:
-            sex = 1 if row["talkersex"] in {"f", "w", "female"} else 0
+            match row["talkersex"].lower():
+                case "f" | "w" | "female" | "woman":
+                    sex = 1
+                case "m" | " male" | "man":
+                    sex = 0
+                case _:
+                    sex = np.nan
+                    print(f"Warning: unknown sex '{row["talkersex"]}' for record {row["id"]}")
             features.append(sex)
 
         # --- binary label by health status
@@ -103,7 +138,7 @@ def build_X_y_groups(
 
     X = np.array(X, dtype=object)
     y = np.array(y, dtype=int)
-    groups = np.array(groups, dtype=int)
+    groups = np.array(groups, dtype=str)
 
     return X, y, groups
 
@@ -112,8 +147,9 @@ def build_X_y_groups(
 # CLI entry point
 # ============================================================
 
-if __name__ == "__main__":
-    X, y, groups = build_X_y_groups(
+
+def main():
+    X, y, groups = build_dataset(
         excluded_pathologies={"Sängerstimme", "Gesangsstimme"},
         include_age=True,
         include_sex=True,
@@ -122,3 +158,7 @@ if __name__ == "__main__":
     )
 
     print(X.shape, y.shape, groups.shape)
+
+
+if __name__ == "__main__":
+    main()

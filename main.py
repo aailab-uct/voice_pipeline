@@ -10,7 +10,7 @@ from feature_extraction import MFCCExtractor, DropSignalColumn
 from signal_augmenters import RawAugmenter
 from feature_augmenters import FeatureAugmenter
 from oversampling import RandomCopySampler, SMOTESampler
-
+from dataset_filtration import build_dataset
 
 # ==========
 # 1) Build imblearn pipeline
@@ -84,7 +84,15 @@ def make_synthetic_audio_dataset(n_records=60, sr=16000, random_state=0):
 
 if __name__ == "__main__":
     # 1) Generate synthetic dataset
-    X, y, groups = make_synthetic_audio_dataset()
+    X, y, groups = build_dataset(
+        excluded_pathologies={"Sängerstimme", "Gesangsstimme"},
+        include_age=True,
+        include_sex=True,
+        allowed_vowels={"a"},
+        allowed_intonations={"n"},
+        selected_datasets={"SVD", "VOICED"},
+        selected_fs=8000,
+    )
     print(X.shape, y.shape, groups.shape)
 
     # 1.1) Encode groups to number

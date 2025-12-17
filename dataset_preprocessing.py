@@ -1,3 +1,5 @@
+"""Module for preprocessing raw datasets into a standardized format."""
+
 # ============================================================
 # Imports
 # ============================================================
@@ -45,10 +47,7 @@ CSV_COLUMNS = [
 # Session IDs to exclude (SVD only)
 # ============================================================
 
-SESSION_ID_TO_DELETE = {
-    1573, 87, 1372, 2088, 2077, 2070,
-    2081, 2426, 2428, 2448, 2450, 2451, 2457
-}
+SESSION_ID_TO_DELETE = {1573, 87, 1372, 2088, 2077, 2070, 2081, 2426, 2428, 2448, 2450, 2451, 2457}
 
 
 # ============================================================
@@ -58,9 +57,7 @@ SESSION_ID_TO_DELETE = {
 SVD_ROOT = Path("data")
 SVD_METADATA_CSV = SVD_ROOT / "SVD" / "svd_information.csv"
 
-SVD_PATTERN = re.compile(
-    r"(?P<id>\d+)-(?P<vowel>[a-z]+)_(?P<intonation>[a-z]+)\.nsp"
-)
+SVD_PATTERN = re.compile(r"(?P<id>\d+)-(?P<vowel>[a-z]+)_(?P<intonation>[a-z]+)\.nsp")
 
 
 def load_svd_metadata(csv_path: Path):
@@ -84,10 +81,7 @@ def process_svd_file(nsp_path: Path, metadata, writer, record_idx):
     parts = m.groupdict()
     speaker_id = parts["id"]
 
-    src = next(
-        (m for m in metadata if m.get("talkerid") == speaker_id),
-        None
-    )
+    src = next((m for m in metadata if m.get("talkerid") == speaker_id), None)
     if not src:
         return record_idx
 
@@ -99,18 +93,13 @@ def process_svd_file(nsp_path: Path, metadata, writer, record_idx):
     wav_name = f"record_{record_id}.wav"
 
     fs, x = nspfile.read(nsp_path)
-    x, _ = librosa.effects.trim(
-        x,
-        top_db=15,
-        frame_length=256,
-        hop_length=65
-    )
+    x, _ = librosa.effects.trim(x, top_db=15, frame_length=256, hop_length=65)
     sf.write(OUT_DIR / wav_name, x, fs)
 
     row = {
         "id": record_id,
         "sessionid": src.get("sessionid"),
-        "talkerid": f"SVD_{src.get('talkerid')}",
+        "talkerid": f"SVD_{src.get("talkerid")}",
         "talkersex": src.get("talkersex"),
         "age": src.get("talkerage"),
         "pathologies": normalize_pathology(src.get("pathologies")),
@@ -129,7 +118,7 @@ def process_svd_file(nsp_path: Path, metadata, writer, record_idx):
 # ============================================================
 
 VOICED_ROOT = Path("data") / "VOICED"
-TARGET_FS = 16000
+TARGET_FS = 8000
 
 
 def extract_number(text):
@@ -156,19 +145,9 @@ def process_voiced_file(dat_path: Path, writer, record_idx):
 
     record = wfdb.rdrecord(str(dat_path.with_suffix("")))
     x = record.p_signal.squeeze()
-    fs = record.fs  # VOICED = 8000 Hz
+    fs = record.fs
 
-    # --- resample to 16 kHz
-    if fs != TARGET_FS:
-        x = librosa.resample(x, orig_sr=fs, target_sr=TARGET_FS)
-        fs = TARGET_FS
-
-    x, _ = librosa.effects.trim(
-        x,
-        top_db=15,
-        frame_length=256,
-        hop_length=65
-    )
+    x, _ = librosa.effects.trim(x, top_db=15, frame_length=256 * fs // 50000, hop_length=65 * fs // 50000)
 
     record_id = f"{record_idx:04d}"
     wav_name = f"record_{record_id}.wav"
@@ -196,6 +175,7 @@ def process_voiced_file(dat_path: Path, writer, record_idx):
 # ============================================================
 # Public API function
 # ============================================================
+
 
 def build_dataset():
     svd_metadata = load_svd_metadata(SVD_METADATA_CSV)
