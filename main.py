@@ -12,6 +12,7 @@ from imblearn.over_sampling import SMOTE
 from feature_extraction import MFCCExtractor, DropSignalColumn
 from signal_augmenters import RawAugmenter
 from feature_augmenters import FeatureAugmenter
+from oversampling import RandomCopySampler
 
 
 
@@ -35,11 +36,12 @@ def build_pipeline():
     """
     pipe = ImbPipeline(steps=[
         ("raw_aug", RawAugmenter(enabled=True, noise_std=0.005, random_state=42)),
-        ("mfcc", MFCCExtractor(sr=16000, n_mfcc=20, pass_through=True)),
+        ("mfcc", MFCCExtractor(sr=16000, n_mfcc=20)),
         ("drop_sig", DropSignalColumn()),
         ("scaler", StandardScaler()),
         ("feat_aug", FeatureAugmenter(enabled=True, std_factor=0.02, random_state=42)),
-        ("smote", SMOTE(random_state=42)),
+        #("smote", SMOTE(random_state=42)),
+        ("resampler", RandomCopySampler()),
         ("clf", LogisticRegression(max_iter=1000))
     ])
     return pipe
