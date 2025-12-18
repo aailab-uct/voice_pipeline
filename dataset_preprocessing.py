@@ -13,6 +13,7 @@ import soundfile as sf
 import librosa
 import wfdb
 from tqdm import tqdm
+import numpy as np
 
 
 # ============================================================
@@ -92,8 +93,11 @@ def process_svd_file(nsp_path: Path, metadata, writer, record_idx):
     record_id = f"{record_idx:04d}"
     wav_name = f"record_{record_id}.wav"
 
-    fs, x = nspfile.read(nsp_path)
-    x, _ = librosa.effects.trim(x, top_db=15, frame_length=256, hop_length=65)
+    fs, x = nspfile.read(nsp_path)  # type: ignore
+    fs = int(fs)
+    x = np.array(x, dtype=np.float32)
+
+    x, _ = librosa.effects.trim(x, top_db=15, frame_length=256 * fs // 50000, hop_length=65 * fs // 50000)
     sf.write(OUT_DIR / wav_name, x, fs)
 
     row = {
@@ -144,8 +148,9 @@ def process_voiced_file(dat_path: Path, writer, record_idx):
         return record_idx
 
     record = wfdb.rdrecord(str(dat_path.with_suffix("")))
-    x = record.p_signal.squeeze()
-    fs = record.fs
+    x = record.p_signal.squeeze()  # type: ignore
+    fs = int(record.fs)  # type: ignore
+    x = np.array(x, dtype=np.float32)
 
     x, _ = librosa.effects.trim(x, top_db=15, frame_length=256 * fs // 50000, hop_length=65 * fs // 50000)
 
