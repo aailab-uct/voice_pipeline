@@ -5,10 +5,11 @@ from pathlib import Path
 import numpy as np
 import argparse
 import socket
-import json
+import time
 
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.linear_model import LogisticRegression
+from sklearn.neighbors import KNeighborsClassifier
 from sklearn.model_selection import StratifiedGroupKFold, GridSearchCV
 from sklearn.metrics import (
     make_scorer,
@@ -20,7 +21,13 @@ from sklearn.metrics import (
 from imblearn.pipeline import Pipeline as ImbPipeline
 import pandas as pd
 
-from feature_extraction import MFCCExtractor, DropSignalColumn
+from feature_extraction import (
+    MFCCExtractor,
+    DropSignalColumn,
+    TimeDomainFeaturesExtractor,
+    ZCRExtractor,
+    SpectralFeaturesExtractor,
+)
 from signal_augmenters import RawAugmenter
 from feature_augmenters import FeatureAugmenter
 from oversampling import RandomCopySampler, SMOTESampler
@@ -52,12 +59,16 @@ def build_pipeline(
     pipe = ImbPipeline(
         steps=[
             ("raw_aug", RawAugmenter(enabled=True, noise_std=0.005, random_state=random_state)),
-            ("mfcc", MFCCExtractor(sr=16000, n_mfcc=20)),
+            ("mfcc", MFCCExtractor(sr=50000, n_mfcc=20)),
+            ("timedomain", TimeDomainFeaturesExtractor(sr=50000, enabled=True)),
+            ("zcr", ZCRExtractor(sr=50000, enabled=True)),
+            ("spectral", SpectralFeaturesExtractor(sr=50000, enabled=True)),
             ("drop_sig", DropSignalColumn()),
             ("scaler", StandardScaler()),
             ("feat_aug", FeatureAugmenter(enabled=True, std_factor=0.02, random_state=random_state)),
             ("resampler", SMOTESampler(enabled=True, random_state=random_state, artificial_only=True)),
-            ("clf", LogisticRegression(max_iter=1000, class_weight=class_weight, random_state=random_state)),
+            ("clf", KNeighborsClassifier(n_neighbors=5)),
+            # ("clf", LogisticRegression(max_iter=1000, class_weight=class_weight, random_state=random_state)),
         ]
     )
     return pipe
@@ -118,7 +129,12 @@ def log_results(
             f.write(experiment_description)
         if config is not None:
             f.write("\n\nConfiguration:\n")
-            f.write(json.dumps(config, indent=4))
+            for k, v in config.items():
+                if isinstance(v, dict):
+                    f.write(f"{k}:\n")
+                    for kk, vv in v.items():
+                        f.write(f"\t{kk}: {vv}\n")
+                f.write(f"{k}: {v}\n")
 
 
 # ==========
@@ -144,6 +160,7 @@ def main(config: dict[str, Any] | None = None):
         allowed_intonations=config.get("allowed_intonations", {"n"}),
         selected_datasets=config.get("selected_datasets", {"SVD"}),
         selected_fs=config.get("selected_fs", 50000),
+        drop_nan_f0=config.get("drop_nan_f0", True),
     )
 
     # 1.1) Encode groups to number
@@ -185,8 +202,17 @@ def main(config: dict[str, Any] | None = None):
         },
         refit=False,
         verbose=2,
+        error_score="raise",
+        # n_jobs=-1,
     )
+
+    start_time = time.time()
     grid_search.fit(X, y, groups=groups)
+    end_time = time.time()
+    print("Fit time:", end_time - start_time)
+    print("Size of training set:", len(y))
+    for i in range(1, 5):
+        print(pipe.steps[i][1]._cached_extraction.cache_info())
 
     log_results(
         grid_search.cv_results_,

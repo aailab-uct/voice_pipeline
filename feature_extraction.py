@@ -1,13 +1,27 @@
 """Feature extraction transformers."""
+
 import numpy as np
 import librosa
-from pathlib import Path
 import parselmouth
 from parselmouth.praat import call
 from scipy.stats import skew
 import spkit as sp
+from functools import cache
+from xxhash import xxh128
 
 from sklearn.base import BaseEstimator, TransformerMixin
+
+
+class _HashableArray:
+    def __init__(self, array: np.ndarray):
+        self.array = array
+        self.hash = xxh128(array.tobytes()).intdigest()
+
+    def __hash__(self):
+        return self.hash
+
+    def __eq__(self, other):
+        return self.hash == other.hash
 
 
 class FeatureExtractor(BaseEstimator, TransformerMixin):
@@ -15,7 +29,7 @@ class FeatureExtractor(BaseEstimator, TransformerMixin):
     Base class for feature extractors.
     """
 
-    def __init__(self, enabled: bool, cache: bool | str = False):
+    def __init__(self, enabled: bool, cache_disabled: bool = False):
         """
         Base class for feature extractors.
 
@@ -24,12 +38,7 @@ class FeatureExtractor(BaseEstimator, TransformerMixin):
         """
         super().__init__()
         self.enabled = enabled
-        if isinstance(cache, str):
-            self.cache_path = Path(cache)
-        elif cache:
-            self.cache_path = Path("feature_cache")
-        else:
-            self.cache_path = None
+        self.cache_disabled = cache_disabled
 
     def fit(self, X: np.ndarray, y: np.ndarray | None = None):
         """
@@ -48,12 +57,14 @@ class FeatureExtractor(BaseEstimator, TransformerMixin):
         ), "X and y must have the same number of samples"
         return self
 
-    def _extract_feature(self, x: np.ndarray) -> np.ndarray:
+    def extract_feature(self, x: np.ndarray) -> np.ndarray:
         """
         Extract features from a single waveform.
-        To be implemented by subclasses.
+
+        To be implemented by subclasses. Only enabled features should be returned. If caching is possible, subclasses
+        should use `cached_extraction` for extraction of all features.
         """
-        raise NotImplementedError("_extract_feature must be implemented by subclasses")
+        raise NotImplementedError("extract_feature must be implemented by subclasses")
 
     def transform(self, X: np.ndarray) -> np.ndarray:
         """
@@ -66,16 +77,42 @@ class FeatureExtractor(BaseEstimator, TransformerMixin):
         """
         if not self.enabled:
             return X
-        # extract features for each sample but use mapping for efficiency
         X_out = []
         for row in X:
             x = row[0]  # the first column is the waveform
-            x = np.asarray(x, dtype=np.float32)
-            features = self._extract_feature(x)
+            features = self.extract_feature(x)
             new_row = np.concatenate((row, features))
             X_out.append(new_row)
 
         return np.array(np.vstack(X_out), dtype=object)
+
+    def cached_extraction(self, x: np.ndarray, **params) -> np.ndarray:
+        """
+        Wrapper for cached extraction of all features from a single waveform.
+        :param x: Waveform array
+        :param params: Additional parameters for extraction
+        """
+        if self.cache_disabled:
+            return self._extract_full_features(x, **params)
+        hashable_x = _HashableArray(x)
+        return self._cached_extraction(hashable_x, **params)
+
+    @classmethod
+    @cache
+    def _cached_extraction(cls, x: _HashableArray, **params) -> np.ndarray:
+        """
+        Cached extraction of all features from a single waveform.
+        :param x: Hashable array wrapper around waveform
+        """
+        return cls._extract_full_features(x.array, **params)
+
+    @staticmethod
+    def _extract_full_features(x: np.ndarray, **params) -> np.ndarray:
+        """
+        Static method to extract features from a single waveform.
+        To be implemented by subclasses. This should extract all possible features, regardless of enabled switches.
+        """
+        raise NotImplementedError("_extract_full_features must be implemented by subclasses")
 
 
 class DropSignalColumn(BaseEstimator, TransformerMixin):
@@ -100,13 +137,21 @@ class MFCCExtractor(FeatureExtractor):
     Output: 2 * n_mfcc features per sample.
     """
 
-    def __init__(self, sr=16000, n_mfcc=20, enabled=True):
-        super().__init__(enabled=enabled)
+    def __init__(self, sr, n_mfcc=20, enabled=True, use_std=True, cache_disabled=False):
+        super().__init__(enabled=enabled, cache_disabled=cache_disabled)
         self.sr = sr
         self.n_mfcc = n_mfcc
+        self.use_std = use_std
 
-    def _extract_feature(self, x: np.ndarray) -> np.ndarray:
-        mfcc = librosa.feature.mfcc(y=x, sr=self.sr, n_mfcc=self.n_mfcc)
+    def extract_feature(self, x: np.ndarray) -> np.ndarray:
+        features = self.cached_extraction(x, sr=self.sr, n_mfcc=self.n_mfcc)
+        if not self.use_std:
+            features = features[: self.n_mfcc]
+        return features
+
+    @staticmethod
+    def _extract_full_features(x: np.ndarray, sr: int, n_mfcc: int) -> np.ndarray:  # type: ignore[override]
+        mfcc = librosa.feature.mfcc(y=x, sr=sr, n_mfcc=n_mfcc)
         mfcc_mean = mfcc.mean(axis=1)
         mfcc_std = mfcc.std(axis=1)
         features = np.concatenate((mfcc_mean, mfcc_std))
@@ -119,12 +164,15 @@ class TimeDomainFeaturesExtractor(FeatureExtractor):
     [diff_pitch, mean_f0, stdev_f0, hnr, jitter, shimmer,
      zero_crossing_rate, shannon_entropy, skewness]
     """
+
     def __init__(
         self,
+        sr,
         fmin=60.0,
         fmax=250.0,
         use_diff_pitch=True,
         use_f0=True,
+        use_stdf0=True,
         use_hnr=True,
         use_jitter=True,
         use_shimmer=True,
@@ -134,10 +182,12 @@ class TimeDomainFeaturesExtractor(FeatureExtractor):
         enabled=True,
     ):
         super().__init__(enabled=enabled)
+        self.sr = sr
         self.fmin = fmin
         self.fmax = fmax
         self.use_diff_pitch = use_diff_pitch
         self.use_f0 = use_f0
+        self.use_stdf0 = use_stdf0
         self.use_hnr = use_hnr
         self.use_jitter = use_jitter
         self.use_shimmer = use_shimmer
@@ -145,63 +195,60 @@ class TimeDomainFeaturesExtractor(FeatureExtractor):
         self.use_entropy = use_entropy
         self.use_skewness = use_skewness
 
-    def _extract_feature(self, x: np.ndarray) -> np.ndarray:
-        sound = parselmouth.Sound(x)
-
-        pitch = call(sound, "To Pitch", 0.0, self.fmin, self.fmax)
-        point_process = call(
-            sound, "To PointProcess (periodic, cc)", self.fmin, self.fmax
-        )
+    @staticmethod
+    def _extract_full_features(x: np.ndarray, fmin: int, fmax: int, sr: int) -> np.ndarray:  # type: ignore[override]
+        sound = parselmouth.Sound(x, sampling_frequency=sr)
+        pitch = call(sound, "To Pitch", 0.0, fmin, fmax)
+        point_process = call(sound, "To PointProcess (periodic, cc)", fmin, fmax)
 
         pitch_data = pitch.selected_array["frequency"]
         pitch_data[pitch_data == 0] = np.nan
 
-        diff_pitch = 0.0
-        mean_f0 = 0.0
-        stdev_f0 = 0.0
-        hnr = 0.0
-        jitter = 0.0
-        shimmer = 0.0
-        zcr = 0.0
-        entropy = 0.0
-        skewness = 0.0
+        mean_f0 = call(pitch, "Get mean", 0, 0, "Hertz")
+        stdev_f0 = call(pitch, "Get standard deviation", 0, 0, "Hertz")
 
-        if self.use_diff_pitch and np.any(~np.isnan(pitch_data)):
-            diff_pitch = (np.nanmax(pitch_data) - np.nanmin(pitch_data)) / np.nanmin(pitch_data)
+        diff_pitch = (np.nanmax(pitch_data) - np.nanmin(pitch_data)) / np.nanmin(pitch_data)
 
-        if self.use_f0:
-            mean_f0 = call(pitch, "Get mean", 0, 0, "Hertz")
-            stdev_f0 = call(pitch, "Get standard deviation", 0, 0, "Hertz")
+        harmonicity = call(sound, "To Harmonicity (cc)", 0.01, fmin, 0.1, 1.0)
+        hnr = call(harmonicity, "Get mean", 0, 0)
 
-        if self.use_hnr:
-            harmonicity = call(sound, "To Harmonicity (cc)", 0.01, self.fmin, 0.1, 1.0)
-            hnr = call(harmonicity, "Get mean", 0, 0)
+        jitter = call(point_process, "Get jitter (local)", 0, 0, 0.0001, 0.02, 1.3)
 
-        if self.use_jitter:
-            jitter = call(point_process, "Get jitter (local)", 0, 0, 0.0001, 0.02, 1.3)
+        shimmer = call([sound, point_process], "Get shimmer (local)", 0, 0, 0.0001, 0.02, 1.3, 1.6)
 
-        if self.use_shimmer:
-            shimmer = call(
-                [sound, point_process],
-                "Get shimmer (local)",
-                0, 0, 0.0001, 0.02, 1.3, 1.6
-            )
+        entropy = sp.entropy(x, alpha=1)
 
-        if self.use_zcr:
-            zcr = np.mean(librosa.feature.zero_crossing_rate(y=x)[0])
+        skewness = skew(x)
 
-        if self.use_entropy:
-            entropy = sp.entropy(x, alpha=1)
-
-        if self.use_skewness:
-            skewness = skew(x)
-
-        return np.array(
-            [diff_pitch, mean_f0, stdev_f0, hnr, jitter, shimmer, zcr, entropy, skewness],
+        features = np.array(
+            [mean_f0, stdev_f0, diff_pitch, hnr, jitter, shimmer, entropy, skewness],
             dtype=np.float32,
         )
+        #  replace nan with 0
+        features = np.nan_to_num(features, nan=0.0)
 
+        return features
 
+    def extract_feature(self, x: np.ndarray) -> np.ndarray:
+        features = self.cached_extraction(
+            x,
+            fmin=self.fmin,
+            fmax=self.fmax,
+            sr=self.sr,
+        )
+
+        mask = [
+            self.use_f0,
+            self.use_stdf0,
+            self.use_diff_pitch,
+            self.use_hnr,
+            self.use_jitter,
+            self.use_shimmer,
+            self.use_entropy,
+            self.use_skewness,
+        ]
+
+        return features[np.array(mask)]
 
 
 class ZCRExtractor(FeatureExtractor):
@@ -209,71 +256,77 @@ class ZCRExtractor(FeatureExtractor):
     Extracts Zero Crossing Rate feature.
     Output: 1 feature per sample (mean ZCR).
     """
-    def __init__(self, enabled=True):
-        super().__init__(enabled=enabled)
 
-    def _extract_feature(self, x: np.ndarray) -> np.ndarray:
-        zcr = librosa.feature.zero_crossing_rate(y=x)[0]
+    def __init__(self, sr, use_mean=True, use_std=True, enabled=True):
+        super().__init__(enabled=enabled)
+        self.sr = sr
+        self.use_mean = use_mean
+        self.use_std = use_std
+
+    @staticmethod
+    def _extract_full_features(x: np.ndarray, sr) -> np.ndarray:  # type: ignore[override]
+        zcr = librosa.feature.zero_crossing_rate(y=x, frame_length=2048 * sr // 50000, hop_length=512 * sr // 50000)[0]
         zcr_mean = np.mean(zcr)
-        return np.array([zcr_mean], dtype=np.float32)
+        zcr_std = np.std(zcr)
+        return np.array([zcr_mean, zcr_std], dtype=np.float32)
+
+    def extract_feature(self, x: np.ndarray) -> np.ndarray:
+        features = self.cached_extraction(x, sr=self.sr)
+        mask = [self.use_mean, self.use_std]
+        return features[mask]
+
 
 class SpectralFeaturesExtractor(FeatureExtractor):
     """
     Extracts spectral features with per-feature enable switches.
     """
+
     def __init__(
         self,
-        sr=16000,
+        sr,
         use_flatness=True,
         use_rolloff=True,
         use_centroid=True,
         use_contrast=True,
         enabled=True,
+        cache_disabled=False,
     ):
-        super().__init__(enabled=enabled)
+        super().__init__(enabled=enabled, cache_disabled=cache_disabled)
         self.sr = sr
         self.use_flatness = use_flatness
         self.use_rolloff = use_rolloff
         self.use_centroid = use_centroid
         self.use_contrast = use_contrast
 
-    def _extract_feature(self, x: np.ndarray) -> np.ndarray:
-        # default values (keep fixed dimension)
-        flatness = 0.0
-        rolloff = 0.0
-        centroid = 0.0
-        contrast = np.zeros(6, dtype=np.float32)
-
+    @staticmethod
+    def _extract_full_features(x: np.ndarray, sr) -> np.ndarray:  # type: ignore[override]
+        n_fft = 2048 * sr // 50000
+        hop_length = 512 * sr // 50000
         # spectral flatness
-        if self.use_flatness:
-            flatness = np.mean(
-                librosa.feature.spectral_flatness(y=x),
-                axis=1
-            )[0]
+
+        flatness = np.mean(librosa.feature.spectral_flatness(y=x, n_fft=n_fft, hop_length=hop_length), axis=1)[0]
 
         # spectral rolloff
-        if self.use_rolloff:
-            rolloff = np.mean(
-                librosa.feature.spectral_rolloff(y=x, sr=self.sr),
-                axis=1
-            )[0]
+        rolloff = np.mean(librosa.feature.spectral_rolloff(y=x, sr=sr, n_fft=n_fft, hop_length=hop_length), axis=1)[0]
 
         # spectral centroid
-        if self.use_centroid:
-            centroid = np.mean(
-                librosa.feature.spectral_centroid(y=x, sr=self.sr),
-                axis=1
-            )[0]
+        centroid = np.mean(librosa.feature.spectral_centroid(y=x, sr=sr, n_fft=n_fft, hop_length=hop_length), axis=1)[0]
 
         # spectral contrast (6 bands by default)
-        if self.use_contrast:
-            contrast = np.mean(
-                librosa.feature.spectral_contrast(y=x, sr=self.sr),
-                axis=1
-            )
+        contrast = np.mean(librosa.feature.spectral_contrast(y=x, sr=sr, n_fft=n_fft, hop_length=hop_length), axis=1)
 
-        features = np.concatenate(
-            ([flatness, rolloff, centroid], contrast)
-        )
+        features = np.concatenate(([flatness, rolloff, centroid], contrast))
 
         return features.astype(np.float32)
+
+    def extract_feature(self, x: np.ndarray) -> np.ndarray:
+        features = self.cached_extraction(x, sr=self.sr)
+        mask = [
+            self.use_flatness,
+            self.use_rolloff,
+            self.use_centroid,
+        ] + [
+            self.use_contrast
+        ] * len(features[3:])
+
+        return features[np.array(mask)].astype(np.float32)
