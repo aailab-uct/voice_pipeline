@@ -4,10 +4,18 @@ from importlib import import_module
 from pathlib import Path
 import numpy as np
 import argparse
+import socket
+import json
 
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.linear_model import LogisticRegression
-from sklearn.model_selection import StratifiedGroupKFold, cross_val_score, GridSearchCV
+from sklearn.model_selection import StratifiedGroupKFold, GridSearchCV
+from sklearn.metrics import (
+    make_scorer,
+    accuracy_score,
+    balanced_accuracy_score,
+    confusion_matrix,
+)
 
 from imblearn.pipeline import Pipeline as ImbPipeline
 import pandas as pd
@@ -24,7 +32,9 @@ from dataset_filtration import build_dataset
 # ==========
 
 
-def build_pipeline(pipeline_params: dict | None = None):
+def build_pipeline(
+    pipeline_params: dict | None = None, class_weight: dict | None | str = None, random_state: int = 42
+) -> ImbPipeline:
     """
     imblearn Pipeline:
 
@@ -41,13 +51,13 @@ def build_pipeline(pipeline_params: dict | None = None):
     # raise NotImplementedError("This function is under development.")
     pipe = ImbPipeline(
         steps=[
-            ("raw_aug", RawAugmenter(enabled=True, noise_std=0.005, random_state=42)),
+            ("raw_aug", RawAugmenter(enabled=True, noise_std=0.005, random_state=random_state)),
             ("mfcc", MFCCExtractor(sr=16000, n_mfcc=20)),
             ("drop_sig", DropSignalColumn()),
             ("scaler", StandardScaler()),
-            ("feat_aug", FeatureAugmenter(enabled=True, std_factor=0.02, random_state=42)),
-            ("resampler", SMOTESampler(enabled=True, random_state=42, artificial_only=True)),
-            ("clf", LogisticRegression(max_iter=1000)),
+            ("feat_aug", FeatureAugmenter(enabled=True, std_factor=0.02, random_state=random_state)),
+            ("resampler", SMOTESampler(enabled=True, random_state=random_state, artificial_only=True)),
+            ("clf", LogisticRegression(max_iter=1000, class_weight=class_weight, random_state=random_state)),
         ]
     )
     return pipe
@@ -84,16 +94,31 @@ def make_synthetic_audio_dataset(n_records=60, sr=16000, random_state=0):
     return X, y, groups
 
 
-def log_results(cv_results: dict[str, np.ndarray], experiment_name: str, experiment_description: str | None = None):
+def log_results(
+    cv_results: dict[str, np.ndarray],
+    experiment_name: str,
+    experiment_description: str | None = None,
+    config: dict | None = None,
+):
     """
     Log grid search results to a CSV file.
     """
-    del experiment_description  # currently unused
     df = pd.DataFrame(cv_results)
-    filename = Path(f"results/{experiment_name}_{datetime.now().strftime("%Y-%m-%d_%H-%M-%S")}.csv")
+    results_filename = Path(f"results/{experiment_name}_{datetime.now().strftime("%Y-%m-%d_%H-%M-%S")}.csv")
     print(datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
-    filename.parent.mkdir(parents=True, exist_ok=True)
-    df.to_csv(filename, index=False)
+    results_filename.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(results_filename, index=False)
+
+    description_filename = results_filename.with_suffix(".txt")
+    with description_filename.open("w") as f:
+        # write machine name
+        f.write(f"Best UAR: {cv_results["mean_test_uar"].max()}\n")
+        f.write(f"Machine: {socket.gethostname()}\n")
+        if experiment_description is not None:
+            f.write(experiment_description)
+        if config is not None:
+            f.write("\n\nConfiguration:\n")
+            f.write(json.dumps(config, indent=4))
 
 
 # ==========
@@ -126,7 +151,19 @@ def main(config: dict[str, Any] | None = None):
     groups = le.fit_transform(groups)
 
     # 2) Build pipeline
-    pipe = build_pipeline(config.get("pipeline", {}))
+    class_weight = config.get("class_weight", "balanced")
+    assert class_weight in (
+        "balanced",
+        "balanced_dataset",
+        None,
+    ), "class_weight must be 'balanced', 'balanced_dataset' or None"
+    if class_weight == "balanced_dataset":  # means the weights are computed based on the dataset distribution
+        unique, counts = np.unique(y, return_counts=True)
+        total = len(y)
+        class_weight = {cls: total / count for cls, count in zip(unique, counts)}
+    pipe = build_pipeline(
+        config.get("pipeline", {}), class_weight=class_weight, random_state=config.get("random_state", 42)
+    )
 
     # 3) prepare CV
     cv = config.get("cv", StratifiedGroupKFold(n_splits=5))
@@ -138,14 +175,25 @@ def main(config: dict[str, Any] | None = None):
         estimator=pipe,
         param_grid=param_grid,
         cv=cv,
-        scoring=config.get("scoring", "balanced_accuracy"),
+        scoring={
+            "uar": make_scorer(balanced_accuracy_score),
+            "accuracy": make_scorer(accuracy_score),
+            "TP": make_scorer(lambda y_true, y_pred: confusion_matrix(y_true, y_pred)[1, 1]),
+            "TN": make_scorer(lambda y_true, y_pred: confusion_matrix(y_true, y_pred)[0, 0]),
+            "FP": make_scorer(lambda y_true, y_pred: confusion_matrix(y_true, y_pred)[0, 1]),
+            "FN": make_scorer(lambda y_true, y_pred: confusion_matrix(y_true, y_pred)[1, 0]),
+        },
+        refit=False,
+        verbose=2,
     )
     grid_search.fit(X, y, groups=groups)
 
-    print("Best parameters:", grid_search.best_params_)
-    print("Best CV score:", grid_search.best_score_)
-
-    log_results(grid_search.cv_results_, config.get("experiment_name", "exp"), experiment_description=config.get("experiment_description"))
+    log_results(
+        grid_search.cv_results_,
+        config.get("experiment_name", "exp"),
+        experiment_description=config.get("experiment_description"),
+        config=config,
+    )
 
 
 if __name__ == "__main__":

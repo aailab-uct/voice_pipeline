@@ -5,10 +5,11 @@ config = {
     "experiment_description": "Default experiment configuration",
     # model selection parameters
     "param_grid": {
-
+        "raw_aug__enabled": [True],
+        "feat_aug__enabled": [True],
     },
     "pipeline": {
-
+        # TODO
     },
     "cv": StratifiedGroupKFold(n_splits=10),
     "scoring": "balanced_accuracy",
