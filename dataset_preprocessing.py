@@ -55,8 +55,8 @@ SESSION_ID_TO_DELETE = {1573, 87, 1372, 2088, 2077, 2070, 2081, 2426, 2428, 2448
 # ======================= SVD DATASET ========================
 # ============================================================
 
-SVD_ROOT = Path("data")
-SVD_METADATA_CSV = SVD_ROOT / "SVD" / "svd_information.csv"
+SVD_ROOT = Path("data", "SVD")
+SVD_METADATA_CSV = SVD_ROOT / "svd_information.csv"
 
 SVD_PATTERN = re.compile(r"(?P<id>\d+)-(?P<vowel>[a-z]+)_(?P<intonation>[a-z]+)\.nsp")
 
