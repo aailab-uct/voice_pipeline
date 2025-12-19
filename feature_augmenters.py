@@ -37,10 +37,9 @@ class FeatureAugmenter(BaseEstimator, TransformerMixin):
         self.random_state = random_state
         self.skip_integer_features = skip_integer_features
 
-    def fit(self, X, y=None):
+    def fit(self, X: np.ndarray, y=None):
         del y  # unused
         if self.skip_integer_features:
-            X = np.asarray(X, dtype=np.float32)  # select all features as float
             self.mask = np.ones(X.shape[1], dtype=bool)  # no masking
         else:  # apply only to non-integer features (to avoid messing up categorical features)
             self.mask = (
@@ -50,13 +49,11 @@ class FeatureAugmenter(BaseEstimator, TransformerMixin):
                 )
                 != 0
             )  # should not be zero, as that would mean this is an integer feature
-            X = np.asarray(X[:, self.mask], dtype=np.float32)  # select only non-integer features
-        self.X_std_ = np.std(X, axis=0, ddof=1)  # compute std only on selected features
+        self.X_std_ = np.std(X[:, self.mask], axis=0, ddof=1)  # compute std only on selected features
         self.rng_ = np.random.RandomState(self.random_state)
         return self
 
-    def transform(self, X):
-        X = np.asarray(X, dtype=np.float32)
+    def transform(self, X: np.ndarray):
         if not self.enabled:
             return X
         noise_std = self.std_factor * (self.X_std_ + 1e-8)

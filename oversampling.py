@@ -231,9 +231,12 @@ class SMOTESampler(TunableBaseSampler, BaseSMOTE):  # type: ignore[misc]
         self.sampling_strategy = sampling_strategy
         self.artificial_only = artificial_only
 
+    def _fit_resample(self, X: np.ndarray, y: np.ndarray, **params):  # type: ignore
+        self._validate_estimator()
+        return super()._fit_resample(X, y, **params)
+
     def _resample(self, X: np.ndarray, y: np.ndarray, classes: np.ndarray, **params) -> tuple[np.ndarray, np.ndarray]:
         del params
-        self._validate_estimator()  # this initializes the nn_k_ attribute
 
         new_counts = _compute_number_per_class(classes, self.sampling_strategy)
         X_new = [] if self.artificial_only else [X.copy()]
