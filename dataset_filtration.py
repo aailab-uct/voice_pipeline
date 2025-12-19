@@ -10,6 +10,7 @@ import soundfile as sf
 from tqdm import tqdm
 import librosa
 
+
 # ============================================================
 # Paths
 # ============================================================
@@ -31,6 +32,7 @@ def build_dataset(
     allowed_intonations: set[str] | None = None,
     selected_datasets: set[str] | None = None,
     selected_fs: int | None = None,
+    drop_nan_f0: bool = True,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Build X, y and groups for sklearn pipeline.
@@ -91,6 +93,10 @@ def build_dataset(
 
         # --- filter dataset
         if selected_datasets is not None and row["dataset"] not in selected_datasets:
+            continue
+
+        # --- filter nan f0
+        if drop_nan_f0 and row.get("nan_f0") == "True":
             continue
 
         # --- load audio

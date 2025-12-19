@@ -14,6 +14,8 @@ import librosa
 import wfdb
 from tqdm import tqdm
 import numpy as np
+import parselmouth
+from parselmouth.praat import call
 
 
 # ============================================================
@@ -41,6 +43,7 @@ CSV_COLUMNS = [
     "vowel",
     "intonation",
     "dataset",
+    "nan_f0",
 ]
 
 
@@ -104,6 +107,18 @@ def process_svd_file(nsp_path: Path, metadata, writer, record_idx):
     x, _ = librosa.effects.trim(x, top_db=15, frame_length=256 * fs // 50000, hop_length=65 * fs // 50000)
     sf.write(OUT_DIR / wav_name, x, fs)
 
+    # Check if f0 can be extracted
+    fmin = 60.0
+    fmax = 250.0
+
+    sound = parselmouth.Sound(values=x[:, 0], sampling_frequency=fs)
+    pitch = call(sound, "To Pitch", 0.0, fmin, fmax)
+
+    pitch_data = pitch.selected_array["frequency"]
+    pitch_data[pitch_data == 0] = np.nan
+
+    mean_f0 = call(pitch, "Get mean", 0, 0, "Hertz")
+
     row = {
         "id": record_id,
         "sessionid": src.get("sessionid"),
@@ -115,6 +130,7 @@ def process_svd_file(nsp_path: Path, metadata, writer, record_idx):
         "vowel": parts["vowel"],
         "intonation": parts["intonation"],
         "dataset": "SVD",
+        "nan_f0": np.isnan(mean_f0),
     }
 
     writer.writerow(row)
@@ -158,6 +174,18 @@ def process_voiced_file(dat_path: Path, writer, record_idx):
 
     x, _ = librosa.effects.trim(x, top_db=15, frame_length=256 * fs // 50000, hop_length=65 * fs // 50000)
 
+    # Check if f0 can be extracted
+    fmin = 60.0
+    fmax = 250.0
+
+    sound = parselmouth.Sound(x, sampling_frequency=fs)
+    pitch = call(sound, "To Pitch", 0.0, fmin, fmax)
+
+    pitch_data = pitch.selected_array["frequency"]
+    pitch_data[pitch_data == 0] = np.nan
+
+    mean_f0 = call(pitch, "Get mean", 0, 0, "Hertz")
+
     record_id = f"{record_idx:04d}"
     wav_name = f"record_{record_id}.wav"
     sf.write(OUT_DIR / wav_name, x, fs)
@@ -175,6 +203,7 @@ def process_voiced_file(dat_path: Path, writer, record_idx):
         "vowel": "a",
         "intonation": "n",
         "dataset": "VOICED",
+        "nan_f0": np.isnan(mean_f0),
     }
 
     writer.writerow(row)
