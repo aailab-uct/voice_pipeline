@@ -5,13 +5,15 @@ config = {
     "experiment_description": "Default experiment configuration",
     # model selection parameters
     "param_grid": {
-        "raw_aug__enabled": [True],
-        "feat_aug__enabled": [True],
+        "raw_aug__enabled": [False],
+        "feat_aug__enabled": [True, False],
+        "feat_aug__std_factor": [0.01, 0.02, 0.05],
+        "clf__n_neighbors": [3, 5, 7],
     },
     "pipeline": {
         # TODO
     },
-    "cv": StratifiedGroupKFold(n_splits=10),
+    "cv": StratifiedGroupKFold(n_splits=5),
     "scoring": "balanced_accuracy",
     # dataset building parameters
     "excluded_pathologies": {"Sängerstimme", "Gesangsstimme"},
