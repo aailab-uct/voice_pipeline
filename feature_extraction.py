@@ -2,6 +2,7 @@
 
 import numpy as np
 import librosa
+from pathlib import Path
 
 from sklearn.base import BaseEstimator, TransformerMixin
 
@@ -11,7 +12,7 @@ class FeatureExtractor(BaseEstimator, TransformerMixin):
     Base class for feature extractors.
     """
 
-    def __init__(self, enabled: bool):
+    def __init__(self, enabled: bool, cache: bool | str = False):
         """
         Base class for feature extractors.
 
@@ -20,6 +21,12 @@ class FeatureExtractor(BaseEstimator, TransformerMixin):
         """
         super().__init__()
         self.enabled = enabled
+        if isinstance(cache, str):
+            self.cache_path = Path(cache)
+        elif cache:
+            self.cache_path = Path("feature_cache")
+        else:
+            self.cache_path = None
 
     def fit(self, X: np.ndarray, y: np.ndarray | None = None):
         """
