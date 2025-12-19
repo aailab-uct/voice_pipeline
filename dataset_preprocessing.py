@@ -93,7 +93,11 @@ def process_svd_file(nsp_path: Path, metadata, writer, record_idx):
     record_id = f"{record_idx:04d}"
     wav_name = f"record_{record_id}.wav"
 
-    fs, x = nspfile.read(nsp_path)  # type: ignore
+    try:
+        fs, x = nspfile.read(nsp_path)  # type: ignore
+    except RuntimeError as e:
+        print(f"Warning: failed to read {nsp_path}: {e}")
+        return record_idx
     fs = int(fs)
     x = np.array(x, dtype=np.float32)
 
