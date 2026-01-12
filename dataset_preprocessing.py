@@ -48,36 +48,66 @@ CSV_COLUMNS = [
 
 
 # ============================================================
-# Session IDs to exclude (SVD only)
-# ============================================================
-
-SESSION_ID_TO_DELETE = {1573, 87, 1372, 2088, 2077, 2070, 2081, 2426, 2428, 2448, 2450, 2451, 2457}
-
-
-# ============================================================
 # ======================= SVD DATASET ========================
 # ============================================================
 
+# session id´s from SVD dataste which are known for corruption, artifacts or other problems
+SESSION_ID_TO_DELETE = {1573, 87, 1372, 2088, 2077, 2070, 2081, 2426, 2428, 2448, 2450, 2451, 2457}
+# home directory for SVD database recordings
 SVD_ROOT = Path("data", "SVD")
+# path to file with metadata
 SVD_METADATA_CSV = SVD_ROOT / "svd_information.csv"
-
+# pattern by which recordings are filtered, pattern: ID-VOWEL_INTONATION.nsp
 SVD_PATTERN = re.compile(r"(?P<id>\d+)-(?P<vowel>[a-z]+)_(?P<intonation>[a-z]+)\.nsp")
 
 
 def load_svd_metadata(csv_path: Path):
+    """
+    Function which take input csv file and make
+    dictionary like list of keys for easy access
+
+    Args:
+        csv_path: path to csv file
+    Returns:
+        list: list of dictionary like keys for accessing of  input data
+    """
     with open(csv_path, newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         return list(reader)
 
 
 def normalize_pathology(value):
+    """
+    Function for normalization of labeling of pathologies
+    from none to healthy or from empty label to healthy.
+
+    Args:
+        value: label
+    Returns:
+        str: normalized label
+    """
+    # None version
     if value is None:
         return "healthy"
+    # missing version
     value = value.strip()
+    # return label if repaired or original label was already healthy
     return value if value else "healthy"
 
 
 def process_svd_file(nsp_path: Path, metadata, writer, record_idx):
+    """
+    Main function for processing a SVD file, which is run in cykle through directory with recordings.
+
+    Args:
+        nsp_path: path to nsp file
+        metadata: list with dictionary like structure with metadata
+        writer: output csv file
+        record_idx: index of recording
+    Returns:
+
+    """
+    # check if pattern is correct and extract  id, vowel and intonation
     m = SVD_PATTERN.fullmatch(nsp_path.name)
     if not m:
         return record_idx
@@ -85,26 +115,37 @@ def process_svd_file(nsp_path: Path, metadata, writer, record_idx):
     parts = m.groupdict()
     speaker_id = parts["id"]
 
+    # connect id from name of recording with speaker id in metadata and
+    # return dict of relevant metadata or none if dosnt find match
     src = next((m for m in metadata if m.get("talkerid") == speaker_id), None)
     if not src:
         return record_idx
 
+    # check if id is not None and is not in list of excluded files
     session_id = src.get("sessionid")
     if session_id is not None and int(session_id) in SESSION_ID_TO_DELETE:
         return record_idx
 
+    # new name for recording generation
     record_id = f"{record_idx:04d}"
     wav_name = f"record_{record_id}.wav"
 
+    # try to load nsp file wia nspfile library
     try:
+        # sampling rate and data
         fs, x = nspfile.read(nsp_path)  # type: ignore
+    # wide exception for nsp file load
     except RuntimeError as e:
         print(f"Warning: failed to read {nsp_path}: {e}")
         return record_idx
+    # conversion od sample rate to int
     fs = int(fs)
+    # conversion of data to nummpy array
     x = np.array(x, dtype=np.float32)
 
+    # cut first moments of the start and end of each recording
     x, _ = librosa.effects.trim(x, top_db=15, frame_length=256 * fs // 50000, hop_length=65 * fs // 50000)
+    # save preprocessed file to wav file with new unificated name
     sf.write(OUT_DIR / wav_name, x, fs)
 
     # Check if f0 can be extracted
