@@ -159,11 +159,6 @@ def process_svd_file(nsp_path: Path, metadata, writer, record_idx):
     # call calculation of f0 component with defined limits of frequency
     pitch = call(sound, "To Pitch", 0.0, fmin, fmax)
 
-    # pick a field of frequencies
-    pitch_data = pitch.selected_array["frequency"]
-    # change of calculated f0 whne it´s 0, to nan, because there calculation failed
-    pitch_data[pitch_data == 0] = np.nan
-
     # final call of calculation of mean from frequencies
     mean_f0 = call(pitch, "Get mean", 0, 0, "Hertz")
 
@@ -274,7 +269,7 @@ def process_voiced_file(dat_path: Path, writer, record_idx):
     fmax = 250.0
 
     # creation of parselmouth obeject sound
-    sound = parselmouth.Sound(x, sampling_frequency=fs)
+    sound = parselmouth.Sound(x, sr=fs)
     # call of function to calculate f0 via parselmouth
     pitch = call(sound, "To Pitch", 0.0, fmin, fmax)
 
