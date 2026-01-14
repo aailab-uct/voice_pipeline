@@ -55,7 +55,6 @@ def build_pipeline(
     if pipeline_params is None:
         pipeline_params = {}
 
-    # raise NotImplementedError("This function is under development.")
     pipe = ImbPipeline(
         steps=[
             ("raw_aug", RawAugmenter(enabled=True, noise_std=0.005, random_state=random_state)),
@@ -71,6 +70,11 @@ def build_pipeline(
             # ("clf", LogisticRegression(max_iter=1000, class_weight=class_weight, random_state=random_state)),
         ]
     )
+    # take settings from config if config is available
+    # if config is not available or is empty, tak settings of pipe from above
+    if pipeline_params:
+        pipe.set_params(**pipeline_params)
+
     return pipe
 
 
