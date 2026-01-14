@@ -13,6 +13,7 @@ from sklearn.base import BaseEstimator, TransformerMixin
 
 
 class _HashableArray:
+    """This is a wrapper around a numpy array to make it hashable for caching purposes."""
     def __init__(self, array: np.ndarray):
         self.array = array
         self.hash = xxh128(array.tobytes()).intdigest()

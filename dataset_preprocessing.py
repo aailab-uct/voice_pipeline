@@ -222,9 +222,6 @@ def process_voiced_file(dat_path: Path, writer, record_idx):
     sound = parselmouth.Sound(x, sampling_frequency=fs)
     pitch = call(sound, "To Pitch", 0.0, fmin, fmax)
 
-    pitch_data = pitch.selected_array["frequency"]
-    pitch_data[pitch_data == 0] = np.nan
-
     mean_f0 = call(pitch, "Get mean", 0, 0, "Hertz")
 
     record_id = f"{record_idx:04d}"
