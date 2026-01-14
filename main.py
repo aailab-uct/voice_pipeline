@@ -158,7 +158,7 @@ def main(config: dict[str, Any] | None = None):
         include_sex=config.get("include_sex", True),
         allowed_vowels=config.get("allowed_vowels", {"a"}),
         allowed_intonations=config.get("allowed_intonations", {"n"}),
-        selected_datasets=config.get("selected_datasets", {"SVD"}),
+        selected_datasets=config.get("selected_datasets", {"SVD", "VOICED"}),
         selected_fs=config.get("selected_fs", 50000),
         drop_nan_f0=config.get("drop_nan_f0", True),
     )

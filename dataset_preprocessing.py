@@ -54,7 +54,7 @@ CSV_COLUMNS = [
 # ============================================================
 
 # session id´s from SVD dataste which are known for corruption, artifacts or other problems
-SESSION_ID_TO_DELETE = {1573, 87, 1372, 2088, 2077, 2070, 2081, 2426, 2428, 2448, 2450, 2451, 2457}
+SESSION_ID_TO_DELETE = {1573, 87, 1372, 2088, 2077, 2070, 2081, 2426, 2428, 2448, 2450, 2451, 2457, 713} # added new, 713 missing HEDR/HDR8 subchunk
 # home directory for SVD database recordings
 SVD_ROOT = Path("data", "SVD")
 # path to file with metadata
@@ -269,7 +269,7 @@ def process_voiced_file(dat_path: Path, writer, record_idx):
     fmax = 250.0
 
     # creation of parselmouth obeject sound
-    sound = parselmouth.Sound(x, sr=fs)
+    sound = parselmouth.Sound(x, sampling_frequency=fs)
     # call of function to calculate f0 via parselmouth
     pitch = call(sound, "To Pitch", 0.0, fmin, fmax)
 
