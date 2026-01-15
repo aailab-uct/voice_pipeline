@@ -7,27 +7,22 @@ from parselmouth.praat import call
 from scipy.stats import skew
 import spkit as sp
 from functools import cache
-from xxhash import xxh128
 
 from sklearn.base import BaseEstimator, TransformerMixin
 
-
-class _HashableArray:
-    """This is a wrapper around a numpy array to make it hashable for caching purposes."""
-    def __init__(self, array: np.ndarray):
-        self.array = array
-        self.hash = xxh128(array.tobytes()).intdigest()
-
-    def __hash__(self):
-        return self.hash
-
-    def __eq__(self, other):
-        return self.hash == other.hash
+from src.hashable import HashableArray, HashableDict
 
 
 class FeatureExtractor(BaseEstimator, TransformerMixin):
     """
     Base class for feature extractors.
+
+    All classes inheriting from this must implement:
+    - __init__(self, enabled: bool, cache_disabled: bool = False)
+    - static method `_extract_full_features(x: np.ndarray, **params) -> np.ndarray`
+    - method `extract_feature(x: np.ndarray) -> np.ndarray`
+    The `_extract_full_features` method should extract all possible features, regardless of enabled switches.
+    The `extract_feature` method should return only the enabled features, and can use caching via `cached_extraction`.
     """
 
     def __init__(self, enabled: bool, cache_disabled: bool = False):
@@ -36,10 +31,29 @@ class FeatureExtractor(BaseEstimator, TransformerMixin):
 
         :param enabled: Whether to enable this extractor
         :type enabled: bool
+        :param cache_disabled: Whether to disable caching, should be used if raw augmentations are applied
+        :type cache_disabled: bool
         """
         super().__init__()
         self.enabled = enabled
         self.cache_disabled = cache_disabled
+
+    @staticmethod
+    def _extract_full_features(x: np.ndarray, **params) -> np.ndarray:
+        """
+        Static method to extract features from a single waveform.
+        To be implemented by subclasses. This should extract all possible features, regardless of enabled switches.
+        """
+        raise NotImplementedError("_extract_full_features must be implemented by subclasses")
+
+    def extract_feature(self, x: np.ndarray) -> np.ndarray:
+        """
+        Extract features from a single waveform.
+
+        To be implemented by subclasses. Only enabled features should be returned. If caching is possible, subclasses
+        should use `cached_extraction` for extraction of all features.
+        """
+        raise NotImplementedError("extract_feature must be implemented by subclasses")
 
     def fit(self, X: np.ndarray, y: np.ndarray | None = None):
         """
@@ -57,15 +71,6 @@ class FeatureExtractor(BaseEstimator, TransformerMixin):
             y.shape[0] if y is not None else X.shape[0]
         ), "X and y must have the same number of samples"
         return self
-
-    def extract_feature(self, x: np.ndarray) -> np.ndarray:
-        """
-        Extract features from a single waveform.
-
-        To be implemented by subclasses. Only enabled features should be returned. If caching is possible, subclasses
-        should use `cached_extraction` for extraction of all features.
-        """
-        raise NotImplementedError("extract_feature must be implemented by subclasses")
 
     def transform(self, X: np.ndarray) -> np.ndarray:
         """
@@ -95,25 +100,18 @@ class FeatureExtractor(BaseEstimator, TransformerMixin):
         """
         if self.cache_disabled:
             return self._extract_full_features(x, **params)
-        hashable_x = _HashableArray(x)
-        return self._cached_extraction(hashable_x, **params)
+        hashable_x = HashableArray(x)
+        hashable_params = HashableDict(params)
+        return self._cached_extraction(hashable_x, **hashable_params)
 
     @classmethod
-    @cache
-    def _cached_extraction(cls, x: _HashableArray, **params) -> np.ndarray:
+    @cache  # Cache the extraction results based on the hash of the input array and parameters
+    def _cached_extraction(cls, x: HashableArray, **params) -> np.ndarray:
         """
         Cached extraction of all features from a single waveform.
         :param x: Hashable array wrapper around waveform
         """
         return cls._extract_full_features(x.array, **params)
-
-    @staticmethod
-    def _extract_full_features(x: np.ndarray, **params) -> np.ndarray:
-        """
-        Static method to extract features from a single waveform.
-        To be implemented by subclasses. This should extract all possible features, regardless of enabled switches.
-        """
-        raise NotImplementedError("_extract_full_features must be implemented by subclasses")
 
 
 class DropSignalColumn(BaseEstimator, TransformerMixin):
@@ -266,7 +264,9 @@ class ZCRExtractor(FeatureExtractor):
 
     @staticmethod
     def _extract_full_features(x: np.ndarray, sr) -> np.ndarray:  # type: ignore[override]
-        zcr = librosa.feature.zero_crossing_rate(y=x, frame_length=2048 * sr // 50000, hop_length=512 * sr // 50000)[0]
+        frame_length = 2048 * sr // 50000
+        hop_length = 512 * sr // 50000
+        zcr = librosa.feature.zero_crossing_rate(y=x, frame_length=frame_length, hop_length=hop_length)[0]
         zcr_mean = np.mean(zcr)
         zcr_std = np.std(zcr)
         return np.array([zcr_mean, zcr_std], dtype=np.float32)
