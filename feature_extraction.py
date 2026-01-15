@@ -6,11 +6,14 @@ import parselmouth
 from parselmouth.praat import call
 from scipy.stats import skew
 import spkit as sp
-from functools import cache
-
 from sklearn.base import BaseEstimator, TransformerMixin
+import atexit
 
+from src.feature_caching import FeatureCache
 from src.hashable import HashableArray, HashableDict
+
+cache = FeatureCache()  # Initialize the feature cache
+atexit.register(cache.flush_to_disk)  # Ensure cache is flushed to disk on program exit
 
 
 class FeatureExtractor(BaseEstimator, TransformerMixin):
@@ -102,11 +105,11 @@ class FeatureExtractor(BaseEstimator, TransformerMixin):
             return self._extract_full_features(x, **params)
         hashable_x = HashableArray(x)
         hashable_params = HashableDict(params)
-        return self._cached_extraction(hashable_x, **hashable_params)
+        return self._cached_extraction(hashable_x, hashable_params)
 
     @classmethod
-    @cache  # Cache the extraction results based on the hash of the input array and parameters
-    def _cached_extraction(cls, x: HashableArray, **params) -> np.ndarray:
+    @cache.cache_method
+    def _cached_extraction(cls, x: HashableArray, params: HashableDict) -> np.ndarray:
         """
         Cached extraction of all features from a single waveform.
         :param x: Hashable array wrapper around waveform
