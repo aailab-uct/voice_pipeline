@@ -273,6 +273,11 @@ def process_voiced_file(dat_path: Path, writer, record_idx):
     # call of function to calculate f0 via parselmouth
     pitch = call(sound, "To Pitch", 0.0, fmin, fmax)
 
+    # separation of frequency from calculated f0 values
+    pitch_data = pitch.selected_array["frequency"]
+    # replacement of zero values to nan (where it was not able to calculate f0)
+    pitch_data[pitch_data == 0] = np.nan
+
     # call of function to calculate mean fo f0 frquencies
     mean_f0 = call(pitch, "Get mean", 0, 0, "Hertz")
 

@@ -7,6 +7,7 @@ import argparse
 import socket
 import time
 
+from sklearn.dummy import DummyClassifier
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.linear_model import LogisticRegression
 from sklearn.neighbors import KNeighborsClassifier
@@ -33,6 +34,9 @@ from feature_augmenters import FeatureAugmenter
 from oversampling import RandomCopySampler, SMOTESampler
 from dataset_filtration import build_dataset
 
+import warnings
+# shouldnt have impact on calculations
+warnings.filterwarnings("ignore", message="All-NaN slice encountered")
 
 # ==========
 # 1) Build imblearn pipeline
@@ -40,12 +44,17 @@ from dataset_filtration import build_dataset
 
 
 def build_pipeline(
-    pipeline_params: dict | None = None, class_weight: dict | None | str = None, random_state: int = 42,
-    sr: int = 50000,
+    pipeline_params: dict | None = None, class_weight: dict | None | str = None, random_state: int = 42
 ) -> ImbPipeline:
     """
     imblearn Pipeline:
 
+    RawAugment (waveform) ->
+    MFCCExtractor ->
+    StandardScaler ->
+    FeatureAugment (optional jitter) ->
+    SMOTE (train-only resampling) ->
+    LogisticRegression
     """
     if pipeline_params is None:
         pipeline_params = {}
@@ -53,15 +62,22 @@ def build_pipeline(
     pipe = ImbPipeline(
         steps=[
             ("raw_aug", RawAugmenter(enabled=True, noise_std=0.005, random_state=random_state)),
-            ("mfcc", MFCCExtractor(sr=sr, n_mfcc=20)),
-            ("timedomain", TimeDomainFeaturesExtractor(sr=sr, enabled=True)),
-            ("zcr", ZCRExtractor(sr=sr, enabled=True)),
-            ("spectral", SpectralFeaturesExtractor(sr=sr, enabled=True)),
+            ("mfcc", MFCCExtractor(sr=50000, n_mfcc=20)),
+            ("timedomain", TimeDomainFeaturesExtractor(sr=50000, enabled=True)),
+            ("zcr", ZCRExtractor(sr=50000, enabled=True)),
+            ("spectral", SpectralFeaturesExtractor(sr=50000, enabled=True)),
             ("drop_sig", DropSignalColumn()),
             ("scaler", StandardScaler()),
             ("feat_aug", FeatureAugmenter(enabled=True, std_factor=0.02, random_state=random_state)),
-            ("resampler", SMOTESampler(enabled=True, random_state=random_state, artificial_only=True)),
-            ("clf", KNeighborsClassifier(n_neighbors=5)),
+            # artificial only means that real samples are discarded
+            # sampling strategi set how much there will be samples in the end, {0:1000, 1:1000} for each class
+            ("resampler", SMOTESampler(enabled=True, random_state=random_state, artificial_only=True, sampling_strategy="auto")),
+            # Placeholder classifier.
+            # The real classifier (e.g. KNN or KAN) is injected later by GridSearchCV
+            # via the "clf" parameter in param_grid.
+            ("clf", DummyClassifier(strategy="most_frequent")),
+            # ("clf", KNeighborsClassifier(n_neighbors=5)),
+            # ("clf", LogisticRegression(max_iter=1000, class_weight=class_weight, random_state=random_state)),
         ]
     )
     # take settings from config if config is available
@@ -144,11 +160,15 @@ def main(config: dict[str, Any] | None = None):
     """
     if config is None:
         config = {
-            "param_grid": {
-                "raw_aug__enabled": [True, False],
-                "feat_aug__enabled": [True, False],
-                "feat_aug__std_factor": [0.01, 0.02, 0.05],
-            },
+            "param_grid": [
+                {
+                    "clf": [KNeighborsClassifier()],
+                    "clf__n_neighbors": [3, 5],
+                    "raw_aug__enabled": [True, False],
+                    "feat_aug__enabled": [True, False],
+                    "feat_aug__std_factor": [0.01, 0.02, 0.05],
+                }
+            ]
         }
     X, y, groups = build_dataset(
         excluded_pathologies=config.get("excluded_pathologies", {"Sängerstimme", "Gesangsstimme"}),
@@ -177,10 +197,7 @@ def main(config: dict[str, Any] | None = None):
         total = len(y)
         class_weight = {cls: total / count for cls, count in zip(unique, counts)}
     pipe = build_pipeline(
-        config.get("pipeline", {}),
-        class_weight=class_weight,
-        random_state=config.get("random_state", 42),
-        sr=config.get("selected_fs", 50000)
+        config.get("pipeline", {}), class_weight=class_weight, random_state=config.get("random_state", 42)
     )
 
     # 3) prepare CV
