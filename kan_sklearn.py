@@ -16,16 +16,16 @@ class KANClassifier(BaseEstimator, ClassifierMixin):
 
     def __init__(self, hidden=8, grid=5, k=3, steps=200, lr=1e-3, seed=0, threshold=0.5, device="cpu"):
         # Network hyperparameters
-        self.hidden = hidden        # number of neurons in the hidden layer
-        self.grid = grid            # number of grid points for spline functions in KAN
-        self.k = k                  # spline degree (smoothness)
-        self.steps = steps          # number of training iterations
-        self.lr = lr                # learning rate
+        self.hidden = hidden  # number of neurons in the hidden layer
+        self.grid = grid  # number of grid points for spline functions in KAN
+        self.k = k  # spline degree (smoothness)
+        self.steps = steps  # number of training iterations
+        self.lr = lr  # learning rate
 
         # Other settings
-        self.seed = seed            # random seed for reproducibility
+        self.seed = seed  # random seed for reproducibility
         self.threshold = threshold  # decision threshold for binary classification
-        self.device = device        # "cpu" or "cuda"
+        self.device = device  # "cpu" or "cuda"
 
     def fit(self, X, y):
         """
@@ -52,8 +52,8 @@ class KANClassifier(BaseEstimator, ClassifierMixin):
         ).to(self.device)
 
         # Convert data to torch tensors
-        Xt = torch.from_numpy(X).to(self.device)
-        yt = torch.from_numpy(y).to(self.device)
+        X_t = torch.from_numpy(X).to(self.device)
+        y_t = torch.from_numpy(y).to(self.device)
 
         # Optimizer
         opt = torch.optim.Adam(self.model_.parameters(), lr=self.lr)
@@ -66,11 +66,11 @@ class KANClassifier(BaseEstimator, ClassifierMixin):
 
         # Training loop
         for _ in range(self.steps):
-            opt.zero_grad()             # reset gradients
-            logits = self.model_(Xt)    # forward pass
-            loss = loss_fn(logits, yt)  # compute loss
-            loss.backward()             # backpropagation
-            opt.step()                  # update weights
+            opt.zero_grad()  # reset gradients
+            logits = self.model_(X_t)  # forward pass
+            loss = loss_fn(logits, y_t)  # compute loss
+            loss.backward()  # backpropagation
+            opt.step()  # update weights
 
         return self
 
@@ -81,13 +81,13 @@ class KANClassifier(BaseEstimator, ClassifierMixin):
         """
 
         X = np.asarray(X, dtype=np.float32)
-        Xt = torch.from_numpy(X).to(self.device)
+        X_t = torch.from_numpy(X).to(self.device)
 
         # Switch to evaluation mode
         self.model_.eval()
 
         with torch.no_grad():
-            logits = self.model_(Xt)
+            logits = self.model_(X_t)
             # Convert logits to probabilities for class 1
             p1 = torch.sigmoid(logits).cpu().numpy()
 

@@ -106,7 +106,7 @@ def build_dataset(
             continue
 
         # original name of record
-        original_file = AUDIO_DIR /f"record_{row["id"]}.wav"
+        original_file = AUDIO_DIR / f"record_{row["id"]}.wav"
         # name of recrod for resampled records
         cached_file = AUDIO_DIR / f"record_{row["id"]}_{selected_fs}.wav" if selected_fs is not None else original_file
         if cached_file.exists():

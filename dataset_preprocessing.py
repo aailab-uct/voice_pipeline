@@ -54,7 +54,22 @@ CSV_COLUMNS = [
 # ============================================================
 
 # session id´s from SVD dataste which are known for corruption, artifacts or other problems
-SESSION_ID_TO_DELETE = {1573, 87, 1372, 2088, 2077, 2070, 2081, 2426, 2428, 2448, 2450, 2451, 2457, 713} # added new, 713 missing HEDR/HDR8 subchunk
+SESSION_ID_TO_DELETE = {
+    1573,
+    87,
+    1372,
+    2088,
+    2077,
+    2070,
+    2081,
+    2426,
+    2428,
+    2448,
+    2450,
+    2451,
+    2457,
+    713,
+}  # added new, 713 missing HEDR/HDR8 subchunk
 # home directory for SVD database recordings
 SVD_ROOT = Path("data", "SVD")
 # path to file with metadata
@@ -313,6 +328,7 @@ def process_voiced_file(dat_path: Path, writer, record_idx):
 # ============================================================
 # Public API function
 # ============================================================
+
 
 def build_dataset():
     """

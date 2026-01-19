@@ -9,7 +9,6 @@ import time
 
 from sklearn.dummy import DummyClassifier
 from sklearn.preprocessing import StandardScaler, LabelEncoder
-from sklearn.linear_model import LogisticRegression
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.model_selection import StratifiedGroupKFold, GridSearchCV
 from sklearn.metrics import (
@@ -31,10 +30,11 @@ from feature_extraction import (
 )
 from signal_augmenters import RawAugmenter
 from feature_augmenters import FeatureAugmenter
-from oversampling import RandomCopySampler, SMOTESampler
+from oversampling import SMOTESampler
 from dataset_filtration import build_dataset
 
 import warnings
+
 # shouldnt have impact on calculations
 warnings.filterwarnings("ignore", message="All-NaN slice encountered")
 
@@ -43,9 +43,7 @@ warnings.filterwarnings("ignore", message="All-NaN slice encountered")
 # ==========
 
 
-def build_pipeline(
-    pipeline_params: dict | None = None, class_weight: dict | None | str = None, random_state: int = 42
-) -> ImbPipeline:
+def build_pipeline(pipeline_params: dict | None = None, random_state: int = 42) -> ImbPipeline:
     """
     imblearn Pipeline:
 
@@ -61,7 +59,7 @@ def build_pipeline(
 
     pipe = ImbPipeline(
         steps=[
-            ("raw_aug", RawAugmenter(enabled=True, noise_std=0.005, random_state=random_state)),
+            ("raw_aug", RawAugmenter(enabled=False, noise_std=0.005, random_state=random_state)),
             ("mfcc", MFCCExtractor(sr=50000, n_mfcc=20)),
             ("timedomain", TimeDomainFeaturesExtractor(sr=50000, enabled=True)),
             ("zcr", ZCRExtractor(sr=50000, enabled=True)),
@@ -71,13 +69,14 @@ def build_pipeline(
             ("feat_aug", FeatureAugmenter(enabled=True, std_factor=0.02, random_state=random_state)),
             # artificial only means that real samples are discarded
             # sampling strategi set how much there will be samples in the end, {0:1000, 1:1000} for each class
-            ("resampler", SMOTESampler(enabled=True, random_state=random_state, artificial_only=True, sampling_strategy="auto")),
+            (
+                "resampler",
+                SMOTESampler(enabled=True, random_state=random_state, artificial_only=True, sampling_strategy="auto"),
+            ),
             # Placeholder classifier.
             # The real classifier (e.g. KNN or KAN) is injected later by GridSearchCV
             # via the "clf" parameter in param_grid.
             ("clf", DummyClassifier(strategy="most_frequent")),
-            # ("clf", KNeighborsClassifier(n_neighbors=5)),
-            # ("clf", LogisticRegression(max_iter=1000, class_weight=class_weight, random_state=random_state)),
         ]
     )
     # take settings from config if config is available
@@ -186,19 +185,7 @@ def main(config: dict[str, Any] | None = None):
     groups = le.fit_transform(groups)
 
     # 2) Build pipeline
-    class_weight = config.get("class_weight", "balanced")
-    assert class_weight in (
-        "balanced",
-        "balanced_dataset",
-        None,
-    ), "class_weight must be 'balanced', 'balanced_dataset' or None"
-    if class_weight == "balanced_dataset":  # means the weights are computed based on the dataset distribution
-        unique, counts = np.unique(y, return_counts=True)
-        total = len(y)
-        class_weight = {cls: total / count for cls, count in zip(unique, counts)}
-    pipe = build_pipeline(
-        config.get("pipeline", {}), class_weight=class_weight, random_state=config.get("random_state", 42)
-    )
+    pipe = build_pipeline(config.get("pipeline", {}), random_state=config.get("random_state", 42))
 
     # 3) prepare CV
     cv = config.get("cv", StratifiedGroupKFold(n_splits=5))
@@ -221,7 +208,7 @@ def main(config: dict[str, Any] | None = None):
         refit=False,
         verbose=2,
         error_score="raise",
-        # n_jobs=-1,
+        # n_jobs=-1, # causes issues with caching as the forked processes copy the cache
     )
 
     start_time = time.time()
@@ -229,8 +216,6 @@ def main(config: dict[str, Any] | None = None):
     end_time = time.time()
     print("Fit time:", end_time - start_time)
     print("Size of training set:", len(y))
-    for i in range(1, 5):
-        print(pipe.steps[i][1]._cached_extraction.cache_info())
 
     log_results(
         grid_search.cv_results_,
@@ -249,10 +234,6 @@ if __name__ == "__main__":
         default="config.py",
         help="Path to python file to load configuration from (default: config.py)",
     )
-    try:
-        parsed_config = import_module("config").config
-    except AttributeError:
-        parsed_config = None
-    except ImportError:
-        parsed_config = None
+    parsed_config = import_module("config").config
+    print(parsed_config)
     main(parsed_config)

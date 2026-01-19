@@ -16,7 +16,6 @@ def _compute_number_per_class(
     :param classes: Array of class labels
     :type classes: np.ndarray
     :param sampling_strategy: Sampling strategy to determine desired counts
-
         - "auto": resample all classes to the maximum class count
         - dict|list: specific counts or multipliers per class
         - int: specific count for all classes

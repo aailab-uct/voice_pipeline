@@ -8,4 +8,4 @@ venv*/
 data/
 dataset/
 results/
-cache/
+model/
