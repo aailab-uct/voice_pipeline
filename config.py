@@ -2,7 +2,7 @@
 
 from sklearn.model_selection import StratifiedGroupKFold
 from sklearn.neighbors import KNeighborsClassifier
-from kan_sklearn import KANClassifier
+from custom_classifiers import KANClassifier
 
 config = {
     "experiment_name": "default",

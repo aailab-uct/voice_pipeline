@@ -1,3 +1,4 @@
+"""Scikit-learn compatible wrapper for custom classifiers."""
 import numpy as np
 import torch
 from sklearn.base import BaseEstimator, ClassifierMixin
