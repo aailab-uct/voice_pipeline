@@ -2,6 +2,7 @@
 
 from pathlib import Path
 import pickle
+import gzip
 
 
 class FeatureCache:
@@ -9,9 +10,9 @@ class FeatureCache:
 
     def __init__(self):
         """Initialize the feature cache."""
-        self.cache_file = Path("feature_cache.pkl")
+        self.cache_file = Path("feature_cache.pkl.gz")
         if self.cache_file.exists():
-            with open(self.cache_file, "rb") as f:
+            with gzip.open(self.cache_file, "rb") as f:
                 self.cache = pickle.load(f)
                 print(f"Cache size: {len(self.cache)} items.")
 
@@ -20,7 +21,7 @@ class FeatureCache:
 
     def flush_to_disk(self):
         """Flush the cache to disk. This should be called at program exit - `atexit.register` is recommended."""
-        with open(self.cache_file, "wb") as f:
+        with gzip.open(self.cache_file, "wb") as f:
             pickle.dump(self.cache, f)
         print("Feature cache flushed to disk.")
         print(f"Cache size: {len(self.cache)} items.")
