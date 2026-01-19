@@ -56,7 +56,7 @@ class FeatureAugmenter(BaseEstimator, TransformerMixin):
     def transform(self, X: np.ndarray):
         if not self.enabled:
             return X
-        noise_std = self.std_factor * (self.X_std_ + 1e-8)
+        noise_std = self.std_factor * (self.X_std_ + 1e-8)  # avoid zero std
         noise = self.rng_.normal(loc=0.0, scale=noise_std, size=X.shape)
         X[:, self.mask] += noise  # apply noise only to selected features
         return X

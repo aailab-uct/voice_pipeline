@@ -140,6 +140,15 @@ class MFCCExtractor(FeatureExtractor):
     """
 
     def __init__(self, sr, n_mfcc=20, enabled=True, use_std=True, cache_disabled=False):
+        """
+        Extracts MFCC features: mean and std over time for each coefficient.
+
+        :param sr: Sampling rate
+        :param n_mfcc: Number of MFCC coefficients to extract
+        :param enabled: Whether the extractor is enabled
+        :param use_std: Whether to use standard deviation of MFCCs
+        :param cache_disabled: Whether to disable caching
+        """
         super().__init__(enabled=enabled, cache_disabled=cache_disabled)
         self.sr = sr
         self.n_mfcc = n_mfcc
@@ -162,9 +171,18 @@ class MFCCExtractor(FeatureExtractor):
 
 class TimeDomainFeaturesExtractor(FeatureExtractor):
     """
-    Output order:
-    [diff_pitch, mean_f0, stdev_f0, hnr, jitter, shimmer,
-     zero_crossing_rate, shannon_entropy, skewness]
+    Extracts time-domain features with per-feature enable switches.
+
+    8 features returned in following order:
+        - diff_pitch
+        - mean_f0
+        - stdev_f0
+        - hnr
+        - jitter
+        - shimmer
+        - zero_crossing_rate
+        - shannon_entropy
+        - skewness
     """
 
     def __init__(
@@ -172,6 +190,8 @@ class TimeDomainFeaturesExtractor(FeatureExtractor):
         sr,
         fmin=60.0,
         fmax=250.0,
+        enabled=True,
+        cache_disabled=False,
         use_diff_pitch=True,
         use_f0=True,
         use_stdf0=True,
@@ -181,9 +201,37 @@ class TimeDomainFeaturesExtractor(FeatureExtractor):
         use_zcr=True,
         use_entropy=True,
         use_skewness=True,
-        enabled=True,
     ):
-        super().__init__(enabled=enabled)
+        """
+        Extracts time-domain features with per-feature enable switches.
+
+        8 features returned in following order:
+            - diff_pitch
+            - mean_f0
+            - stdev_f0
+            - hnr
+            - jitter
+            - shimmer
+            - zero_crossing_rate
+            - shannon_entropy
+            - skewness
+
+        :param sr:  Sampling rate
+        :param fmin: Minimum pitch frequency for pitch extraction (praat)
+        :param fmax: Maximum pitch frequency for pitch extraction (praat)
+        :param enabled: Whether the extractor is enabled
+        :param cache_disabled: Whether to disable caching
+        :param use_diff_pitch: Whether to use diff_pitch feature
+        :param use_f0: Whether to use mean_f0 feature
+        :param use_stdf0: Whether to use stdev_f0 feature
+        :param use_hnr: Whether to use hnr feature
+        :param use_jitter: Whether to use jitter feature
+        :param use_shimmer: Whether to use shimmer feature
+        :param use_zcr: Whether to use zero_crossing_rate feature
+        :param use_entropy: Whether to use shannon_entropy feature
+        :param use_skewness: Whether to use skewness feature
+        """
+        super().__init__(enabled=enabled, cache_disabled=cache_disabled)
         self.sr = sr
         self.fmin = fmin
         self.fmax = fmax
@@ -203,12 +251,11 @@ class TimeDomainFeaturesExtractor(FeatureExtractor):
         pitch = call(sound, "To Pitch", 0.0, fmin, fmax)
         point_process = call(sound, "To PointProcess (periodic, cc)", fmin, fmax)
 
-        pitch_data = pitch.selected_array["frequency"]
-        pitch_data[pitch_data == 0] = np.nan
-
         mean_f0 = call(pitch, "Get mean", 0, 0, "Hertz")
         stdev_f0 = call(pitch, "Get standard deviation", 0, 0, "Hertz")
 
+        pitch_data = pitch.selected_array["frequency"]
+        pitch_data[pitch_data == 0] = np.nan
         diff_pitch = (np.nanmax(pitch_data) - np.nanmin(pitch_data)) / np.nanmin(pitch_data)
 
         harmonicity = call(sound, "To Harmonicity (cc)", 0.01, fmin, 0.1, 1.0)
@@ -259,8 +306,18 @@ class ZCRExtractor(FeatureExtractor):
     Output: 1 feature per sample (mean ZCR).
     """
 
-    def __init__(self, sr, use_mean=True, use_std=True, enabled=True):
-        super().__init__(enabled=enabled)
+    def __init__(self, sr, use_mean=True, use_std=True, enabled=True, cache_disabled=False):
+        """
+        Extracts Zero Crossing Rate feature.
+        Output: 1 feature per sample (mean ZCR).
+
+        :param sr: Sampling rate
+        :param use_mean: Whether to use mean ZCR feature
+        :param use_std: Whether to use std ZCR feature
+        :param enabled: Whether the extractor is enabled
+        :param cache_disabled: Whether caching is disabled
+        """
+        super().__init__(enabled=enabled, cache_disabled=cache_disabled)
         self.sr = sr
         self.use_mean = use_mean
         self.use_std = use_std
@@ -295,6 +352,16 @@ class SpectralFeaturesExtractor(FeatureExtractor):
         enabled=True,
         cache_disabled=False,
     ):
+        """
+        Extracts spectral features with per-feature enable switches.
+        :param sr: Sampling rate
+        :param use_flatness: Whether to use spectral flatness feature
+        :param use_rolloff: Whether to use spectral rolloff feature
+        :param use_centroid: Whether to use spectral centroid feature
+        :param use_contrast: Whether to use spectral contrast features
+        :param enabled: Whether the extractor is enabled
+        :param cache_disabled: Whether caching is disabled
+        """
         super().__init__(enabled=enabled, cache_disabled=cache_disabled)
         self.sr = sr
         self.use_flatness = use_flatness
@@ -306,8 +373,8 @@ class SpectralFeaturesExtractor(FeatureExtractor):
     def _extract_full_features(x: np.ndarray, sr) -> np.ndarray:  # type: ignore[override]
         n_fft = 2048 * sr // 50000
         hop_length = 512 * sr // 50000
-        # spectral flatness
 
+        # spectral flatness
         flatness = np.mean(librosa.feature.spectral_flatness(y=x, n_fft=n_fft, hop_length=hop_length), axis=1)[0]
 
         # spectral rolloff

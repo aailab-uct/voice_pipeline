@@ -206,8 +206,11 @@ class RandomCopySampler(TunableBaseSampler):
 
 
 class SMOTESampler(TunableBaseSampler, BaseSMOTE):  # type: ignore[misc]
-    """Custom SMOTE oversampler that generates only artificial samples without copying existing ones."""
+    """Custom SMOTE oversampler that can also generate only artificial samples without copying existing ones."""
 
+    # Note that the code is mostly inherited from imblearn's BaseSMOTE class
+    # Complexity arises from integrating with imblearn's architecture and adding custom functionality which is not
+    # straightforward.
     _sampling_type = "over-sampling"
 
     def __init__(
@@ -225,7 +228,6 @@ class SMOTESampler(TunableBaseSampler, BaseSMOTE):  # type: ignore[misc]
             random_state=random_state,
             k_neighbors=kwargs.get("k_neighbors", 5),
         )
-        del kwargs  # unused
 
         self.sampling_strategy = sampling_strategy
         self.artificial_only = artificial_only
@@ -235,11 +237,15 @@ class SMOTESampler(TunableBaseSampler, BaseSMOTE):  # type: ignore[misc]
         return super()._fit_resample(X, y, **params)
 
     def _resample(self, X: np.ndarray, y: np.ndarray, classes: np.ndarray, **params) -> tuple[np.ndarray, np.ndarray]:
-        del params
+        del params  # not used
 
-        new_counts = _compute_number_per_class(classes, self.sampling_strategy)
+        new_counts = _compute_number_per_class(classes, self.sampling_strategy)  # desired counts per class
+
+        # copy inputs to output if not artificial only
         X_new = [] if self.artificial_only else [X.copy()]
         y_new = [] if self.artificial_only else [y.copy()]
+
+        # Oversample each class to the desired count
         for cls, target in new_counts.items():
             n_samples = target - (0 if self.artificial_only else np.sum(y == cls))
             if n_samples <= 0:
@@ -254,7 +260,7 @@ class SMOTESampler(TunableBaseSampler, BaseSMOTE):  # type: ignore[misc]
             X_syn, y_syn = self._make_samples(
                 X_cls,
                 y.dtype,
-                y_cls[0],  # target label - this is different from the class label
+                y_cls[0],  # target label used to label synthetic samples
                 X_cls,
                 nns,
                 n_samples,

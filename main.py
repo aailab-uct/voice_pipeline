@@ -1,3 +1,5 @@
+"""Main entry point for voice pathology classification pipeline."""
+
 from typing import Any
 from datetime import datetime
 from importlib import import_module

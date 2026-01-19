@@ -1,3 +1,5 @@
+"""Sample configuration file"""
+
 from sklearn.model_selection import StratifiedGroupKFold
 from sklearn.neighbors import KNeighborsClassifier
 from kan_sklearn import KANClassifier
@@ -6,13 +8,12 @@ config = {
     "experiment_name": "default",
     "experiment_description": "KNN vs KAN + augmentation grid",
     # ========== GRID SEARCH ==========
-    # list of dicts = two branches (KNN / KAN) with their own params
+    # list of dicts for GridSearchCV's param_grid - each dict is a separate branch
     "param_grid": [
         {
             # --- classifier branch: KNN ---
             "clf": [KNeighborsClassifier()],
             "clf__n_neighbors": [3],
-
             # --- augmentation/grid params shared ---
             "raw_aug__enabled": [False],  # True, False
             "feat_aug__enabled": [True],  # True, False
@@ -68,3 +69,6 @@ config = {
     "selected_datasets": {"SVD", "VOICED"},
     "selected_fs": 50000,
 }
+
+if __name__ == "__main__":
+    raise NotImplementedError("This is a configuration file. It is not meant to be run directly.")
