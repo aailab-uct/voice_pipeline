@@ -13,6 +13,7 @@ from sklearn.dummy import DummyClassifier
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.model_selection import StratifiedGroupKFold, GridSearchCV
+from sklearn.feature_selection import SelectKBest, mutual_info_classif
 from sklearn.metrics import (
     make_scorer,
     accuracy_score,
@@ -68,6 +69,7 @@ def build_pipeline(pipeline_params: dict | None = None, random_state: int = 42) 
             ("spectral", SpectralFeaturesExtractor(sr=50000, enabled=True)),
             ("drop_sig", DropSignalColumn()),
             ("scaler", StandardScaler()),
+            ("selector", SelectKBest(score_func=mutual_info_classif, k=20)),
             ("feat_aug", FeatureAugmenter(enabled=True, std_factor=0.02, random_state=random_state)),
             # artificial only means that real samples are discarded
             # sampling strategi set how much there will be samples in the end, {0:1000, 1:1000} for each class
