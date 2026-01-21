@@ -18,6 +18,7 @@ config = {
             "raw_aug__enabled": [False],  # True, False
             "feat_aug__enabled": [True],  # True, False
             "feat_aug__std_factor": [0.01],  # 0.01, 0.02, 0.05
+            "resampler__random_state": [60]
         },
         {
             # --- classifier branch: KAN ---
@@ -31,6 +32,7 @@ config = {
             "raw_aug__enabled": [False],  # True, False
             "feat_aug__enabled": [True],  # True, False
             "feat_aug__std_factor": [0.02],  # 0.01, 0.02, 0.05
+            "resampler__random_state": [60]
         },
     ],
     # ========== FIXED PIPELINE SETTINGS ==========
@@ -53,9 +55,11 @@ config = {
         "feat_aug__random_state": 42,
         # resampler
         "resampler__enabled": True,
-        "resampler__random_state": 42,
+        # "resampler__random_state": 42,
         "resampler__artificial_only": True,
-        "resampler__sampling_strategy": {0: 1000, 1: 1000},  # set number of samples in each class, "auto"
+        "resampler__sampling_strategy": {0: 1000, 1: 2000},  # set number of samples in each class, "auto"
+        # selector setting
+        "selector__k": 20,
     },
     # ========== CV / scoring ==========
     "cv": StratifiedGroupKFold(n_splits=5),
