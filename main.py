@@ -9,6 +9,12 @@ import argparse
 import socket
 import time
 
+import sys
+from contextlib import contextmanager
+from tqdm import tqdm
+from sklearn.model_selection import ParameterGrid
+
+
 from sklearn.dummy import DummyClassifier
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.neighbors import KNeighborsClassifier
@@ -153,6 +159,26 @@ def log_results(
                         f.write(f"\t{kk}: {vv}\n")
                 f.write(f"{k}: {v}\n")
 
+@contextmanager
+def tqdm_from_verbose(total, desc="GridSearch", unit="fit"):
+    pbar = tqdm(total=total, desc=desc, unit=unit)
+    old_stdout = sys.stdout
+
+    class StdoutProxy:
+        def write(self, s):
+            old_stdout.write(s)
+            if "[CV] END" in s:
+                pbar.update(1)
+
+        def flush(self):
+            old_stdout.flush()
+
+    sys.stdout = StdoutProxy()
+    try:
+        yield
+    finally:
+        sys.stdout = old_stdout
+        pbar.close()
 
 # ==========
 # 3) Main entry point
@@ -215,8 +241,13 @@ def main(config: dict[str, Any] | None = None):
         # n_jobs=-1, # causes issues with caching as the forked processes copy the cache
     )
 
+    n_candidates = len(list(ParameterGrid(param_grid)))
+    n_folds = cv.get_n_splits(X, y, groups)
+    total = n_candidates * n_folds
+
     start_time = time.time()
-    grid_search.fit(X, y, groups=groups)
+    with tqdm_from_verbose(total=total):
+        grid_search.fit(X, y, groups=groups)
     end_time = time.time()
     print("Fit time:", end_time - start_time)
     print("Size of training set:", len(y))
@@ -238,6 +269,6 @@ if __name__ == "__main__":
         default="config.py",
         help="Path to python file to load configuration from (default: config.py)",
     )
-    parsed_config = import_module("config").config
+    parsed_config = import_module("config_experimental").config
     print(parsed_config)
     main(parsed_config)
