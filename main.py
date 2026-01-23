@@ -205,7 +205,7 @@ def main(config: dict[str, Any] | None = None):
             ]
         }
     X, y, groups = build_dataset(
-        excluded_pathologies=config.get("excluded_pathologies", {"Sängerstimme", "Gesangsstimme"}),
+        excluded_pathologies=config.get("excluded_pathologies", {"Sängerstimme", "Gesangsstimme", "Sigmatismus", "Balbuties", "Dysodie"}),
         include_age=config.get("include_age", True),
         include_sex=config.get("include_sex", True),
         allowed_vowels=config.get("allowed_vowels", {"a"}),
