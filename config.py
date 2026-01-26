@@ -72,7 +72,10 @@ config = {
     "cv": StratifiedGroupKFold(n_splits=5),
     "scoring": "balanced_accuracy",
     # ========== DATASET BUILDING ==========
-    "excluded_pathologies": {"Sängerstimme", "Gesangsstimme"},
+    "excluded_pathologies": {"Sängerstimme", "Gesangsstimme",
+            "Sigmatismus", "Balbuties",
+            "Dysodie", "Poltersyndrom",
+            "Non-fluency-Syndrom"},
     "include_age": False,
     "include_sex": True,
     "allowed_vowels": {"a"},
