@@ -5,6 +5,7 @@ from imblearn.base import BaseSampler
 from imblearn.over_sampling._smote.base import BaseSMOTE
 from sklearn.utils._param_validation import Interval, StrOptions
 from numbers import Real, Integral
+from src.nn import VAEModel
 
 
 def _compute_number_per_class(
@@ -101,7 +102,6 @@ class TunableBaseSampler(BaseSampler):
                 [map_unique_to_class[val] for val in X_col]
             )  # map original values to new class labels
             classes = classes + mapped_classes  # combine original classes with new mapped classes
-
         X_new, y_new = self._resample(X, y, classes, **params)
         return X_new, y_new
 
@@ -247,7 +247,7 @@ class SMOTESampler(TunableBaseSampler, BaseSMOTE):  # type: ignore[misc]
 
         # Oversample each class to the desired count
         for cls, target in new_counts.items():
-            n_samples = target - (0 if self.artificial_only else np.sum(y == cls))
+            n_samples = target - (0 if self.artificial_only else np.sum(classes == cls))
             if n_samples <= 0:
                 continue
             cls_mask = classes == cls
@@ -266,6 +266,67 @@ class SMOTESampler(TunableBaseSampler, BaseSMOTE):  # type: ignore[misc]
                 n_samples,
                 1.0,
             )  # generate synthetic samples
+            X_new.append(X_syn)
+            y_new.append(y_syn)
+        X_res = np.vstack(X_new)
+        y_res = np.hstack(y_new)
+        # Shuffle the resampled dataset
+        perm = self.rng.permutation(X_res.shape[0])
+        return X_res[perm], y_res[perm]
+
+
+class VAESampler(TunableBaseSampler):
+    """Resampler using Variational Autoencoder (VAE) to generate synthetic samples."""
+
+    def __init__(
+        self,
+        enabled: bool = True,
+        additional_group_classes: list | int | None = None,
+        random_state: None | int = None,
+        artificial_only: bool = False,
+        architecture: dict | None = None,
+        epochs: int = 50,
+        **kwargs,
+    ) -> None:
+        """
+        :param enabled: Whether to enable this sampler
+        :type enabled: bool
+        :param additional_group_classes: Columns in X to use as additional group identifiers
+        :type additional_group_classes: list | int | None
+        :param random_state: Random seed for reproducibility
+        :type random_state: None | int
+        """
+        del kwargs  # unused
+        super().__init__(
+            enabled=enabled,
+            additional_group_classes=additional_group_classes,
+            random_state=random_state,
+        )
+
+        self.vae_model = VAEModel(
+            latent_dim=architecture.get("latent_dim", 10),
+            hidden_layers=architecture.get("hidden_layers", [64, 32]),
+            random_state=random_state,
+            epochs=epochs,
+        )
+        self.artificial_only = artificial_only
+
+    def _resample(self, X: np.ndarray, y: np.ndarray, classes: np.ndarray, **params) -> tuple[np.ndarray, np.ndarray]:
+        del params  # unused
+        self.vae_model.train(X, y, classes)
+
+        new_counts = _compute_number_per_class(classes)
+
+        # copy inputs to output if not artificial only
+        X_new = [] if self.artificial_only else [X.copy()]
+        y_new = [] if self.artificial_only else [y.copy()]
+        # Oversample each class to the desired count
+        for cls, target in new_counts.items():
+            n_samples = target - (0 if self.artificial_only else np.sum(classes == cls))
+            if n_samples <= 0:
+                continue
+            X_syn, y_syn = self.vae_model.generate_samples(n_samples=n_samples, cls=cls)
+
             X_new.append(X_syn)
             y_new.append(y_syn)
         X_res = np.vstack(X_new)
