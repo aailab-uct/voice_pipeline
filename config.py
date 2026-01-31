@@ -21,7 +21,7 @@ config = {
             "raw_aug__enabled": [False],  # True, False
             "feat_aug__enabled": [True],  # True, False
             "feat_aug__std_factor": [0.01],  # 0.01, 0.02, 0.05
-            "resampler__random_state":[40],
+            "resampler__random_state": [40],
             # "resampler__random_state": [0, 2, 6, 10, 20, 30, 40, 50, 60, 100, 500, 1000]
             # "resampler__random_state": resampler_seeds,
         },
@@ -72,15 +72,20 @@ config = {
     "cv": StratifiedGroupKFold(n_splits=5),
     "scoring": "balanced_accuracy",
     # ========== DATASET BUILDING ==========
-    "excluded_pathologies": {"Sängerstimme", "Gesangsstimme",
-            "Sigmatismus", "Balbuties",
-            "Dysodie", "Poltersyndrom",
-            "Non-fluency-Syndrom"},
+    "excluded_pathologies": {
+        "Sängerstimme",
+        "Gesangsstimme",
+        "Sigmatismus",
+        "Balbuties",
+        "Dysodie",
+        "Poltersyndrom",
+        "Non-fluency-Syndrom",
+    },
     "include_age": False,
     "include_sex": True,
     "allowed_vowels": {"a"},
     "allowed_intonations": {"n"},
-    "selected_datasets": {"SVD"}, # "VOICED"
+    "selected_datasets": {"SVD"},  # "VOICED"
     "selected_fs": 50000,
 }
 
