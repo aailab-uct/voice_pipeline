@@ -337,13 +337,14 @@ class VAESampler(TunableBaseSampler):
     def architecture(self, value: dict | None) -> None:
         """Set the architecture of the VAE model."""
         if value is None:
-            value = {"latent_dim": 10, "hidden_layers": [64, 32]}
+            value = {"latent_dim": 10, "hidden_layers": [64, 32], "batch_size": 32}
         self._architecture = value
 
         # Reinitialize the VAE model with the new architecture
         self.vae_model = VAEModel(
             latent_dim=self._architecture.get("latent_dim", 10),
             hidden_layers=self._architecture.get("hidden_layers", [64, 32]),
+            batch_size=self._architecture.get("batch_size", 32),
             random_state=self.random_state,
             epochs=self.epochs,
         )

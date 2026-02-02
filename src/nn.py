@@ -21,11 +21,8 @@ class VAEModel:
         self.batch_size = batch_size
 
     def train(self, X: np.ndarray, y: np.ndarray, classes: np.ndarray) -> None:
-        if self.decoder is None or self.encoder is None:
-            self._initialize_model(x_dim=X.shape[1], n_classes=len(np.unique(classes)))
-        else:
-            self.decoder.apply(self._reset_weights)
-            self.encoder.apply(self._reset_weights)
+        self._initialize_model(x_dim=X.shape[1], n_classes=len(np.unique(classes)))
+
         self.class_to_y = {cls: np.unique(y[y == cls])[0] for cls in np.unique(classes)}
         self.encoder.to(self.device)
         self.decoder.to(self.device)
