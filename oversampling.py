@@ -6,6 +6,7 @@ from imblearn.over_sampling._smote.base import BaseSMOTE
 from sklearn.utils._param_validation import Interval, StrOptions
 from numbers import Real, Integral
 from src.nn import VAEModel
+from numpy.typing import NDArray
 
 
 def _compute_number_per_class(
@@ -105,7 +106,7 @@ class TunableBaseSampler(BaseSampler):
         X_new, y_new = self._resample(X, y, classes, **params)
         return X_new, y_new
 
-    def _resample(self, X: np.ndarray, y: np.ndarray, classes: np.ndarray, **params) -> tuple[np.ndarray, np.ndarray]:
+    def _resample(self, X: NDArray[np.floating], y: NDArray[np.floating] | NDArray[np.bool_], classes: NDArray[np.integer], **params) -> tuple[np.ndarray, np.ndarray]:
         """To be implemented in subclasses."""
         raise NotImplementedError("Subclasses should implement this method.")
 
@@ -278,11 +279,31 @@ class SMOTESampler(TunableBaseSampler, BaseSMOTE):  # type: ignore[misc]
 class VAESampler(TunableBaseSampler):
     """Resampler using Variational Autoencoder (VAE) to generate synthetic samples."""
 
+    # This is needed for sklearn compatibility - defines valid parameters and their types
+    _parameter_constraints: dict = {
+        "enabled": ["boolean"],
+        "additional_group_classes": [
+            "array-like",
+            Interval(Integral, 0, None, closed="left"),  # type: ignore[type-var]
+            None,
+        ],
+        "random_state": ["random_state"],
+        "sampling_strategy": [
+            "array-like",
+            Interval(Real, None, None, closed="neither"),  # type: ignore[type-var]
+            StrOptions({"auto"}),  # type: ignore[type-var]
+        ],
+        "artificial_only": ["boolean"],
+        "architecture": [dict, None],
+        "epochs": [Interval(Integral, 1, None, closed="left")],  # type: ignore[type-var]
+    }
+
     def __init__(
         self,
         enabled: bool = True,
         additional_group_classes: list | int | None = None,
         random_state: None | int = None,
+        sampling_strategy: list | int | float | dict | str = "auto",
         artificial_only: bool = False,
         architecture: dict | None = None,
         epochs: int = 50,
@@ -302,20 +323,50 @@ class VAESampler(TunableBaseSampler):
             additional_group_classes=additional_group_classes,
             random_state=random_state,
         )
-
-        self.vae_model = VAEModel(
-            latent_dim=architecture.get("latent_dim", 10),
-            hidden_layers=architecture.get("hidden_layers", [64, 32]),
-            random_state=random_state,
-            epochs=epochs,
-        )
+        self.epochs = epochs
+        self.architecture = architecture
         self.artificial_only = artificial_only
+        self.sampling_strategy = sampling_strategy
 
-    def _resample(self, X: np.ndarray, y: np.ndarray, classes: np.ndarray, **params) -> tuple[np.ndarray, np.ndarray]:
+    @property
+    def architecture(self) -> dict:
+        """Get the architecture of the VAE model."""
+        return self._architecture
+
+    @architecture.setter
+    def architecture(self, value: dict | None) -> None:
+        """Set the architecture of the VAE model."""
+        if value is None:
+            value = {"latent_dim": 10, "hidden_layers": [64, 32]}
+        self._architecture = value
+
+        # Reinitialize the VAE model with the new architecture
+        self.vae_model = VAEModel(
+            latent_dim=self._architecture.get("latent_dim", 10),
+            hidden_layers=self._architecture.get("hidden_layers", [64, 32]),
+            random_state=self.random_state,
+            epochs=self.epochs,
+        )
+
+    @property
+    def epochs(self) -> int:
+        """Get the number of training epochs for the VAE model."""
+        return self._epochs
+
+    @epochs.setter
+    def epochs(self, value: int) -> None:
+        """Set the number of training epochs for the VAE model."""
+        self._epochs = value
+        # If the VAE model is already initialized, update its epochs
+        if hasattr(self, "vae_model"):
+            self.vae_model.epochs = value
+
+    def _resample(self, X: NDArray[np.floating], y: NDArray[np.floating] | NDArray[np.bool_], classes: NDArray[np.integer], **params) -> tuple[np.ndarray, np.ndarray]:
         del params  # unused
+
         self.vae_model.train(X, y, classes)
 
-        new_counts = _compute_number_per_class(classes)
+        new_counts = _compute_number_per_class(classes, self.sampling_strategy)  # desired counts per class
 
         # copy inputs to output if not artificial only
         X_new = [] if self.artificial_only else [X.copy()]
