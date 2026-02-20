@@ -66,11 +66,13 @@ config = {
         "resampler__artificial_only": False,
         "resampler__sampling_strategy": {0: 1000, 1: 1000},  # set number of samples in each class, "auto"
         # selector setting
+        "selector__enabled": True,
         "selector__k": 20,
     },
     # ========== CV / scoring ==========
     "cv": StratifiedGroupKFold(n_splits=5),
-    "scoring": "balanced_accuracy",
+    "scoring_mode": "multimetric",   # "multimetric" / "accuracy_only" / "uar_only"
+    "refit_metric": False,           # False = jen logování (aktuální stav)
     # ========== DATASET BUILDING ==========
     "excluded_pathologies": {"Sängerstimme", "Gesangsstimme",
             "Sigmatismus", "Balbuties",

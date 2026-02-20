@@ -33,7 +33,7 @@ def build_dataset(
     selected_datasets: set[str] | None = None,
     selected_fs: int | None = None,
     drop_nan_f0: bool = True,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
     Build X, y and groups for sklearn pipeline.
 
@@ -75,6 +75,7 @@ def build_dataset(
     X = []
     y = []
     groups = []
+    pathologies_out = []
 
     # loading of new csv metadata file
     with open(METADATA_CSV, newline="", encoding="utf-8") as f:
@@ -165,12 +166,14 @@ def build_dataset(
         # append of talkerid
         groups.append((row["talkerid"]))
 
-    # conversion to numpy array
+        pathologies_out.append(pathology)
+
     X = np.array(X, dtype=object)
     y = np.array(y, dtype=int)
     groups = np.array(groups, dtype=str)
+    pathologies_out = np.array(pathologies_out, dtype=str)
 
-    return X, y, groups
+    return X, y, groups, pathologies_out
 
 
 # ============================================================

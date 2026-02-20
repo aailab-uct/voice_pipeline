@@ -16,6 +16,7 @@ from tqdm import tqdm
 import numpy as np
 import parselmouth
 from parselmouth.praat import call
+import openpyxl
 
 
 # ============================================================
@@ -181,7 +182,7 @@ def process_svd_file(nsp_path: Path, metadata, writer, record_idx):
     row = {
         "id": record_id,
         "sessionid": src.get("sessionid"),
-        "talkerid": f"SVD_{src.get("talkerid")}",
+        "talkerid": f"SVD_{src.get('talkerid')}",
         "talkersex": src.get("talkersex"),
         "age": src.get("talkerage"),
         "pathologies": normalize_pathology(src.get("pathologies")),
@@ -326,6 +327,148 @@ def process_voiced_file(dat_path: Path, writer, record_idx):
 
 
 # ============================================================
+# ======================= AVFAD DATASET =======================
+# ============================================================
+
+# data layout:
+# data/AVFAD/
+#   AVFAD_01_00_00.xlsx
+#   A/
+#   B/
+#   C/
+#   ...
+# inside letter folders are wavs like ZZZ001.wav, ZZZ002.wav, ZZZ003.wav
+
+AVFAD_ROOT = Path("data") / "AVFAD"
+AVFAD_XLSX = AVFAD_ROOT / "AVFAD_01_00_00.xlsx"
+AVFAD_SHEET = "AVFAD"
+
+# first three recordings per row
+AVFAD_FILES = {
+    "001": "i",
+    "002": "a",
+    "003": "u",
+}
+
+# optional crop to one repetition
+AVFAD_CROP_TO_ONE_REP = True
+
+
+def load_avfad_metadata(xlsx_path: Path):
+    """
+    Reads AVFAD excel and returns list of dicts with needed fields.
+    Uses columns:
+    File ID, Age, Sex, CMVD-I Dimension 1 (word system)
+    """
+
+    wb = openpyxl.load_workbook(xlsx_path, data_only=True)
+    ws = wb[AVFAD_SHEET]
+
+    rows = ws.iter_rows(values_only=True)
+    header = next(rows)
+    col = {str(h).strip(): i for i, h in enumerate(header) if h is not None}
+
+    need = ["File ID", "Age", "Sex", "CMVD-I Dimension 1 (word system)"]
+    for k in need:
+        if k not in col:
+            raise ValueError(f"AVFAD: missing column '{k}' in sheet '{AVFAD_SHEET}'")
+
+    out = []
+    for r in rows:
+        file_id = r[col["File ID"]]
+        if file_id is None:
+            continue
+        out.append(
+            {
+                "file_id": str(file_id).strip(),
+                "age": r[col["Age"]],
+                "sex": r[col["Sex"]],
+                "pathology": r[col["CMVD-I Dimension 1 (word system)"]],
+            }
+        )
+    return out
+
+
+def find_avfad_wav(file_id: str, suffix: str) -> Path | None:
+    """
+    Finds file like {File ID}{suffix}.wav anywhere under AVFAD_ROOT (including letter subfolders)
+    Example: ZZZ + 001 -> ZZZ001.wav
+    """
+    name = f"{file_id}{suffix}.wav"
+    return next(AVFAD_ROOT.rglob(name), None)
+
+
+def crop_to_first_big_interval_from_zero(x: np.ndarray, fs: int, intervals: np.ndarray, min_len_s: float = 1.0) -> np.ndarray:
+    """
+    Crop from start (0) to the end of the first "big" voiced interval.
+    intervals: array [[start, end], ...] in samples.
+    """
+    if x.size == 0 or intervals is None or len(intervals) == 0:
+        return x
+
+    min_len = int(min_len_s * fs)
+
+    for s, e in intervals:
+        if (e - s) >= min_len:
+            end = min(len(x), int(e))
+            return x[:end]
+
+    # fallback: if no big interval found, keep original
+    return x
+
+
+def process_avfad_file(wav_path: Path, src_row: dict, vowel: str, writer, record_idx: int) -> int:
+    """
+    Processes single AVFAD wav into unified wav name and writes one metadata row.
+    """
+    x, fs = sf.read(wav_path, dtype=np.float32)
+
+    # if stereo, keep first channel
+    if isinstance(x, np.ndarray) and x.ndim == 2:
+        x = x[:, 0]
+
+    # optional crop
+    if AVFAD_CROP_TO_ONE_REP:
+        intervals = librosa.effects.split(x, top_db=25, frame_length=2048, hop_length=512)
+        x = crop_to_first_big_interval_from_zero(x, int(fs), intervals, min_len_s=1.0)
+
+    # trim, same style as other functions
+    x, _ = librosa.effects.trim(x, top_db=15, frame_length=256 * fs // 50000, hop_length=65 * fs // 50000)
+
+    # f0 check
+    fmin = 60.0
+    fmax = 250.0
+    sound = parselmouth.Sound(x, sampling_frequency=int(fs))
+    pitch = call(sound, "To Pitch", 0.0, fmin, fmax)
+    mean_f0 = call(pitch, "Get mean", 0, 0, "Hertz")
+
+    record_id = f"{record_idx:04d}"
+    wav_name = f"record_{record_id}.wav"
+    sf.write(OUT_DIR / wav_name, x, int(fs))
+
+    p = normalize_pathology(str(src_row.get("pathology")) if src_row.get("pathology") is not None else None)
+    if p.strip().lower() == "normal":
+        p = "healthy"
+
+    row = {
+        "id": record_id,
+        "sessionid": None,
+        "talkerid": f"AVFAD_{src_row.get('file_id')}",
+        "talkersex": src_row.get("sex"),
+        "age": src_row.get("age"),
+        "pathologies": p,
+        "file": wav_path.name,
+        "vowel": vowel,
+        "intonation": "n",
+        "dataset": "AVFAD",
+        "nan_f0": np.isnan(mean_f0),
+    }
+
+    writer.writerow(row)
+    return record_idx + 1
+
+
+# ============================================================
 # Public API function
 # ============================================================
 
@@ -357,6 +500,15 @@ def build_dataset():
         # run for VOICED dataset
         for p in tqdm(list(VOICED_ROOT.rglob("*.dat")), desc="Processing VOICED"):
             idx = process_voiced_file(p, writer, idx)
+
+        # run for AVFAD dataset
+        avfad_meta = load_avfad_metadata(AVFAD_XLSX)
+        for r in tqdm(avfad_meta, desc="Processing AVFAD"):
+            for suffix, vowel in AVFAD_FILES.items():
+                p = find_avfad_wav(r["file_id"], suffix)
+                if p is None:
+                    continue
+                idx = process_avfad_file(p, r, vowel, writer, idx)
 
 
 # ============================================================
