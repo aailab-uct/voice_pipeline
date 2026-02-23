@@ -388,6 +388,9 @@ class SpectralFeaturesExtractor(FeatureExtractor):
 
         features = np.concatenate(([flatness, rolloff, centroid], contrast))
 
+        # features = np.nan_to_num(features, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
+
+
         return features.astype(np.float32)
 
     def extract_feature(self, x: np.ndarray) -> np.ndarray:

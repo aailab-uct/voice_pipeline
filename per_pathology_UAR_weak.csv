@@ -1,0 +1,47 @@
+pathology,UAR,TP,FN,FP,TN,n_pathology,n_healthy
+Presbyphonia,0.8751827752595409,27,1,209,768,28,977
+Psychogenic dysphonia,0.8644684895452551,33,2,209,768,35,977
+Contact pachydermia,0.8597065847833504,14,1,209,768,15,977
+Subepithelial vocal fold cyst,0.8495616572471185,21,2,209,768,23,977
+Functional dysphonia,0.8495616572471185,42,4,209,768,46,977
+Recurrent laryngeal nerve paresis,0.8464297486251583,107,11,209,768,118,977
+Vocal fold hemorrhage,0.8374843625611281,8,1,209,768,9,977
+Reinke’s edema,0.835347610424376,46,6,209,768,52,977
+Laryngopharyngeal reflux,0.8330399181166837,88,12,209,768,100,977
+Vocal fold polyp,0.8318154283207653,43,6,209,768,49,977
+Dysodia ; Hyperfunctional dysphonia,0.8305399181166837,7,1,209,768,8,977
+Central laryngeal movement disorder,0.8305399181166837,7,1,209,768,8,977
+Dysphonia,0.8161168411936068,44,8,209,768,52,977
+Dysarthrophonia,0.8097065847833504,10,2,209,768,12,977
+Laryngitis ; Leukoplakia,0.7992899181166837,13,3,209,768,16,977
+Vocal fold nodules,0.7930399181166837,24,6,209,768,30,977
+nilateral recurrent laryngeal nerve paralysis,0.7776553027320683,20,6,209,768,26,977
+Hyperfunctional dysphonia,0.7716806948157129,78,25,209,768,103,977
+Laryngeal keratosis,0.7680399181166837,3,1,209,768,4,977
+Acute laryngitis,0.7680399181166837,3,1,209,768,4,977
+Chemical and thermal laryngeal mucosal trauma,0.7566762817530474,8,3,209,768,11,977
+Laryngitis,0.7515304841544195,38,15,209,768,53,977
+Open rhinolalia,0.7391937642705299,9,4,209,768,13,977
+Poltersyndrom,0.726373251450017,2,1,209,768,3,977
+Non-intubation-related vocal fold granuloma,0.726373251450017,4,2,209,768,6,977
+Parkinson Disease,0.726373251450017,2,1,209,768,3,977
+Major Depressive Disorder (Recurrent),0.726373251450017,2,1,209,768,3,977
+VOICE DISORDERS: UNDIAGNOSED OR NOT OTHERWISE SPECIFIED (NOS),0.726373251450017,2,1,209,768,3,977
+Functional dysphonia ; Psychogenic dysphonia,0.7055399181166837,5,3,209,768,8,977
+True vocal fold scar,0.7007322258089914,8,5,209,768,13,977
+Vocal fold varix and ectasia,0.7007322258089914,8,5,209,768,13,977
+Hyperfunctional dysphonia ; Vocal fold nodules,0.6787542038309694,4,3,209,768,7,977
+Arytenoid dislocation,0.6430399181166837,1,1,209,768,2,977
+Amyotrophic lateral sclerosis (ALS) ; Amyotrophic lateral sclerosis (ALS),0.6430399181166837,2,2,209,768,4,977
+Sängerstimme,0.6430399181166837,1,1,209,768,2,977
+Mutational falsetto,0.5180399181166837,1,3,209,768,4,977
+Cyst,0.3930399181166837,0,1,209,768,1,977
+Diplophonia,0.3930399181166837,0,1,209,768,1,977
+Dysphonia ; Mutatio,0.3930399181166837,0,1,209,768,1,977
+Functional dysphonia ; Phonasthenia,0.3930399181166837,0,1,209,768,1,977
+Laryngitis ; Vocal fold polyp,0.3930399181166837,0,1,209,768,1,977
+Mediale Halscyste,0.3930399181166837,0,1,209,768,1,977
+Psychogene Mikrophonie,0.3930399181166837,0,1,209,768,1,977
+Stuttering ; Laryngitis,0.3930399181166837,0,1,209,768,1,977
+Rhinophonie mixta,0.3930399181166837,0,1,209,768,1,977
+Singing voice ; Vocal fold nodules,0.3930399181166837,0,1,209,768,1,977
