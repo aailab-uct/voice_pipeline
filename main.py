@@ -162,25 +162,28 @@ def log_results(
     experiment_name: str,
     experiment_description: str | None = None,
     config: dict | None = None,
-):
-    """
-    Log grid search results to a CSV file.
-    """
-    df = pd.DataFrame(cv_results)
-    results_filename = Path(f"results/{experiment_name}_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.csv")
-    print(datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
-    results_filename.parent.mkdir(parents=True, exist_ok=True)
-    df.to_csv(results_filename, index=False)
+) -> Path:
 
-    description_filename = results_filename.with_suffix(".txt")
-    with description_filename.open("w") as f:
+    df = pd.DataFrame(cv_results)
+
+    ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    run_dir = Path("results") / f"{experiment_name}_{ts}"
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    results_csv = run_dir / "gridsearch.csv"
+    df.to_csv(results_csv, index=False)
+
+    results_txt = run_dir / "gridsearch.txt"
+    with results_txt.open("w") as f:
         if "mean_test_uar" in cv_results:
             f.write(f"Best UAR: {np.nanmax(cv_results['mean_test_uar'])}\n")
         if "mean_test_accuracy" in cv_results:
             f.write(f"Best ACC: {np.nanmax(cv_results['mean_test_accuracy'])}\n")
         f.write(f"Machine: {socket.gethostname()}\n")
+
         if experiment_description is not None:
             f.write(experiment_description)
+
         if config is not None:
             f.write("\n\nConfiguration:\n")
             for k, v in config.items():
@@ -190,6 +193,8 @@ def log_results(
                         f.write(f"\t{kk}: {vv}\n")
                 else:
                     f.write(f"{k}: {v}\n")
+
+    return run_dir
 
 def per_pathology_uar(best_estimator, X, y, groups, pathologies, cv, healthy_name="healthy"):
     y_true_all, y_pred_all, p_all = [], [], []
@@ -267,7 +272,7 @@ def plot_uar_by_pathology(dfp, savepath=None):
     if savepath:
         plt.savefig(savepath, dpi=200)
 
-    plt.show()
+    # plt.show()
 
 @contextmanager
 def tqdm_from_verbose(total, desc="GridSearch", unit="fit"):
@@ -393,7 +398,7 @@ def main(config: dict[str, Any] | None = None):
     print("Fit time:", end_time - start_time)
     print("Size of training set:", len(y))
 
-    log_results(
+    run_dir = log_results(
         grid_search.cv_results_,
         config.get("experiment_name", "exp"),
         experiment_description=config.get("experiment_description"),
@@ -405,15 +410,15 @@ def main(config: dict[str, Any] | None = None):
     dfp.to_csv("per_pathology_results.csv", index=False)
 
     # uložit všechny
-    dfp.to_csv("per_pathology_UAR_all.csv", index=False)
-    plot_uar_by_pathology(dfp, "uar_all.png")
+    dfp.to_csv(run_dir / "per_pathology_UAR_all.csv", index=False)
+    plot_uar_by_pathology(dfp, run_dir / "uar_all.png")
 
     # jen slabší než většina
     threshold = dfp["UAR"].median()
     dfp_weak = dfp[dfp["UAR"] < threshold]
 
-    dfp_weak.to_csv("per_pathology_UAR_weak.csv", index=False)
-    plot_uar_by_pathology(dfp_weak, "uar_weak.png")
+    dfp_weak.to_csv(run_dir / "per_pathology_UAR_weak.csv", index=False)
+    plot_uar_by_pathology(dfp_weak, run_dir / "uar_weak.png")
 
     # plot_uar_by_pathology(dfp, "uar_per_pathology.png")
 
