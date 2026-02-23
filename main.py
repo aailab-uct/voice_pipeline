@@ -428,6 +428,6 @@ if __name__ == "__main__":
     )
     _ = parser.parse_args()
 
-    parsed_config = import_module("config_experimental").config
+    parsed_config = import_module("config").config
     print(parsed_config)
     main(parsed_config)
