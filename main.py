@@ -84,7 +84,9 @@ def build_pipeline(pipeline_params: dict | None = None, random_state: int = 42) 
         steps=[
             ("raw_aug", RawAugmenter(enabled=False, noise_std=0.005, random_state=random_state)),
             ("mfcc", MFCCExtractor(enabled=True, sr=50000, n_mfcc=20)),
-            ("timedomain", TimeDomainFeaturesExtractor(sr=50000, enabled=True)),
+            ("timedomain", TimeDomainFeaturesExtractor(sr=50000, enabled=True, sex_col=1,
+                                                       f0_range_m=(75.0, 300.0),
+                                                       f0_range_f=(100.0, 600.0),)),
             ("zcr", ZCRExtractor(sr=50000, enabled=True)),
             ("spectral", SpectralFeaturesExtractor(sr=50000, enabled=True)),
             ("drop_sig", DropSignalColumn()),
@@ -407,7 +409,7 @@ def main(config: dict[str, Any] | None = None):
 
     best = grid_search.best_estimator_
     dfp = per_pathology_uar(best, X, y, groups, pathologies, cv)
-    dfp.to_csv("per_pathology_results.csv", index=False)
+    # dfp.to_csv("per_pathology_results.csv", index=False)
 
     # uložit všechny
     dfp.to_csv(run_dir / "per_pathology_UAR_all.csv", index=False)

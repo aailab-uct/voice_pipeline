@@ -16,6 +16,30 @@ cache = FeatureCache()  # Initialize the feature cache
 atexit.register(cache.flush_to_disk)  # Ensure cache is flushed to disk on program exit
 
 
+# ============================================================
+# Sex normalization (to m/f)
+# ============================================================
+
+def normalize_sex_mf(value):
+    """
+    Normalize sex/gender to 'm' or 'f'.
+    Returns None if unknown.
+    Accepts also 'w' (women) used in some SVD-related metadata.
+    """
+    if value is None:
+        return None
+
+    s = str(value).strip().lower()
+
+    if s in {"m", "male", "man", "0"}:
+        return "m"
+
+    if s in {"f", "female", "woman", "w", "1"}:
+        return "f"
+
+    return None
+
+
 class FeatureExtractor(BaseEstimator, TransformerMixin):
     """
     Base class for feature extractors.
@@ -201,35 +225,21 @@ class TimeDomainFeaturesExtractor(FeatureExtractor):
         use_zcr=True,
         use_entropy=True,
         use_skewness=True,
+        sex_col=1,
+        f0_range_m=(75.0, 300.0),
+        f0_range_f=(100.0, 600.0),
     ):
         """
         Extracts time-domain features with per-feature enable switches.
 
-        8 features returned in following order:
-            - diff_pitch
-            - mean_f0
-            - stdev_f0
-            - hnr
-            - jitter
-            - shimmer
-            - zero_crossing_rate
-            - shannon_entropy
-            - skewness
-
         :param sr:  Sampling rate
-        :param fmin: Minimum pitch frequency for pitch extraction (praat)
-        :param fmax: Maximum pitch frequency for pitch extraction (praat)
+        :param fmin: Default minimum pitch frequency (fallback if sex unknown)
+        :param fmax: Default maximum pitch frequency (fallback if sex unknown)
         :param enabled: Whether the extractor is enabled
         :param cache_disabled: Whether to disable caching
-        :param use_diff_pitch: Whether to use diff_pitch feature
-        :param use_f0: Whether to use mean_f0 feature
-        :param use_stdf0: Whether to use stdev_f0 feature
-        :param use_hnr: Whether to use hnr feature
-        :param use_jitter: Whether to use jitter feature
-        :param use_shimmer: Whether to use shimmer feature
-        :param use_zcr: Whether to use zero_crossing_rate feature
-        :param use_entropy: Whether to use shannon_entropy feature
-        :param use_skewness: Whether to use skewness feature
+        :param sex_col: Column index in X rows containing sex/gender
+        :param f0_range_m: (fmin, fmax) pitch range for males
+        :param f0_range_f: (fmin, fmax) pitch range for females
         """
         super().__init__(enabled=enabled, cache_disabled=cache_disabled)
         self.sr = sr
@@ -244,6 +254,9 @@ class TimeDomainFeaturesExtractor(FeatureExtractor):
         self.use_zcr = use_zcr
         self.use_entropy = use_entropy
         self.use_skewness = use_skewness
+        self.sex_col = sex_col
+        self.f0_range_m = f0_range_m
+        self.f0_range_f = f0_range_f
 
     @staticmethod
     def _extract_full_features(x: np.ndarray, fmin: int, fmax: int, sr: int) -> np.ndarray:  # type: ignore[override]
@@ -262,18 +275,15 @@ class TimeDomainFeaturesExtractor(FeatureExtractor):
         hnr = call(harmonicity, "Get mean", 0, 0)
 
         jitter = call(point_process, "Get jitter (local)", 0, 0, 0.0001, 0.02, 1.3)
-
         shimmer = call([sound, point_process], "Get shimmer (local)", 0, 0, 0.0001, 0.02, 1.3, 1.6)
 
         entropy = sp.entropy(x, alpha=1)
-
         skewness = skew(x)
 
         features = np.array(
             [mean_f0, stdev_f0, diff_pitch, hnr, jitter, shimmer, entropy, skewness],
             dtype=np.float32,
         )
-        #  replace nan with 0
         features = np.nan_to_num(features, nan=0.0)
 
         return features
@@ -298,6 +308,56 @@ class TimeDomainFeaturesExtractor(FeatureExtractor):
         ]
 
         return features[np.array(mask)]
+
+    def transform(self, X: np.ndarray) -> np.ndarray:
+        """
+        Override transform to use sex-dependent pitch range.
+
+        Assumes:
+          - waveform is in column 0
+          - sex/gender is in column `sex_col`
+
+        If sex is unknown/missing, falls back to self.fmin/self.fmax.
+        """
+        if not self.enabled:
+            return X
+
+        X_out = []
+        for row in X:
+            x = row[0]
+
+            sex_val = row[self.sex_col] if len(row) > self.sex_col else None
+            sex_mf = normalize_sex_mf(sex_val)
+
+            if sex_mf == "m":
+                fmin, fmax = self.f0_range_m
+            elif sex_mf == "f":
+                fmin, fmax = self.f0_range_f
+            else:
+                fmin, fmax = self.fmin, self.fmax
+
+            features = self.cached_extraction(
+                x,
+                fmin=fmin,
+                fmax=fmax,
+                sr=self.sr,
+            )
+
+            mask = [
+                self.use_f0,
+                self.use_stdf0,
+                self.use_diff_pitch,
+                self.use_hnr,
+                self.use_jitter,
+                self.use_shimmer,
+                self.use_entropy,
+                self.use_skewness,
+            ]
+
+            new_row = np.concatenate((row, features[np.array(mask)]))
+            X_out.append(new_row)
+
+        return np.array(np.vstack(X_out), dtype=object)
 
 
 class ZCRExtractor(FeatureExtractor):
@@ -374,22 +434,12 @@ class SpectralFeaturesExtractor(FeatureExtractor):
         n_fft = 2048 * sr // 50000
         hop_length = 512 * sr // 50000
 
-        # spectral flatness
         flatness = np.mean(librosa.feature.spectral_flatness(y=x, n_fft=n_fft, hop_length=hop_length), axis=1)[0]
-
-        # spectral rolloff
         rolloff = np.mean(librosa.feature.spectral_rolloff(y=x, sr=sr, n_fft=n_fft, hop_length=hop_length), axis=1)[0]
-
-        # spectral centroid
         centroid = np.mean(librosa.feature.spectral_centroid(y=x, sr=sr, n_fft=n_fft, hop_length=hop_length), axis=1)[0]
-
-        # spectral contrast (6 bands by default)
         contrast = np.mean(librosa.feature.spectral_contrast(y=x, sr=sr, n_fft=n_fft, hop_length=hop_length), axis=1)
 
         features = np.concatenate(([flatness, rolloff, centroid], contrast))
-
-        # features = np.nan_to_num(features, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
-
 
         return features.astype(np.float32)
 
