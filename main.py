@@ -314,7 +314,7 @@ def main(config: dict[str, Any] | None = None):
                 }
             ]
         }
-    X, y, groups = build_dataset(
+    X, y, groups, pathologies = build_dataset(
         excluded_pathologies=config.get(
             "excluded_pathologies",
             {
