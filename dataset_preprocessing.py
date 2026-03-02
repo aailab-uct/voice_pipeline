@@ -289,7 +289,18 @@ def process_svd_file(nsp_path: Path, metadata, writer, record_idx):
         return record_idx
 
     fs = int(fs)
-    x = np.array(x, dtype=np.float32)
+    x = np.asarray(x)
+
+    if x.ndim > 1:
+        x = x.mean(axis=1)
+
+    if np.issubdtype(x.dtype, np.integer):
+        x = x.astype(np.float32) / float(np.iinfo(x.dtype).max)
+    else:
+        x = x.astype(np.float32)
+        m = float(np.max(np.abs(x))) if x.size else 0.0
+        if m > 1.0:
+            x /= m
 
     x, _ = librosa.effects.trim(
         x, top_db=15, frame_length=256 * fs // 50000, hop_length=65 * fs // 50000
@@ -300,7 +311,7 @@ def process_svd_file(nsp_path: Path, metadata, writer, record_idx):
     sex_mf = normalize_sex_mf(src.get("talkersex"))
     fmin, fmax = f0_range_for_sex(sex_mf)
 
-    sound = parselmouth.Sound(values=x[:, 0], sampling_frequency=fs)
+    sound = parselmouth.Sound(x, sampling_frequency=fs)
     pitch = call(sound, "To Pitch", 0.0, fmin, fmax)
     mean_f0 = call(pitch, "Get mean", 0, 0, "Hertz")
 
