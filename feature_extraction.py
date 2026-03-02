@@ -454,3 +454,84 @@ class SpectralFeaturesExtractor(FeatureExtractor):
         ] * len(features[3:])
 
         return features[np.array(mask)].astype(np.float32)
+
+# ============================================================
+# OpenSMILE extractor
+# ============================================================
+
+_SMILE_SINGLETONS = {}  # (feature_set, feature_level) -> opensmile.Smile instance
+
+
+def _get_smile(feature_set: str, feature_level: str):
+    """
+    Lazy singleton factory for opensmile.Smile to avoid re-instantiation per sample.
+    """
+    key = (feature_set, feature_level)
+    if key in _SMILE_SINGLETONS:
+        return _SMILE_SINGLETONS[key]
+
+    try:
+        import opensmile
+    except ImportError as e:
+        raise ImportError(
+            "Missing dependency 'opensmile'. Install it via: pip install opensmile"
+        ) from e
+
+    fs = getattr(opensmile.FeatureSet, feature_set)
+    fl = getattr(opensmile.FeatureLevel, feature_level)
+
+    smile = opensmile.Smile(feature_set=fs, feature_level=fl)
+    _SMILE_SINGLETONS[key] = smile
+    return smile
+
+
+class OpenSmileExtractor(FeatureExtractor):
+    """
+    Extracts OpenSMILE feature set (e.g., ComParE_2016, eGeMAPSv02) from waveform.
+
+    Notes:
+      - Feature sets and levels are defined by opensmile-python (audEERING). :contentReference[oaicite:1]{index=1}
+      - ComParE_2016 'functionals' can be very large (thousands of features). :contentReference[oaicite:2]{index=2}
+    """
+
+    def __init__(
+        self,
+        sr: int,
+        feature_set: str = "ComParE_2016",
+        feature_level: str = "functionals",
+        enabled: bool = False,
+        cache_disabled: bool = False,
+    ):
+        super().__init__(enabled=enabled, cache_disabled=cache_disabled)
+        self.sr = sr
+        self.feature_set = feature_set
+        self.feature_level = feature_level
+
+    def extract_feature(self, x: np.ndarray) -> np.ndarray:
+        # cached_extraction returns ALL features (fixed order), as float32 vector
+        return self.cached_extraction(
+            x,
+            sr=self.sr,
+            feature_set=self.feature_set,
+            feature_level=self.feature_level,
+        )
+
+    @staticmethod
+    def _extract_full_features(  # type: ignore[override]
+        x: np.ndarray,
+        sr: int,
+        feature_set: str,
+        feature_level: str,
+    ) -> np.ndarray:
+        # opensmile expects 1D signal
+        x = np.asarray(x).reshape(-1)
+
+        smile = _get_smile(feature_set=feature_set, feature_level=feature_level)
+
+        # opensmile returns a pandas.DataFrame for process_signal(); for functionals it's typically 1 row. :contentReference[oaicite:3]{index=3}
+        df = smile.process_signal(x, sr)
+
+        # Flatten in stable column order
+        vec = df.iloc[0].to_numpy(dtype=np.float32, copy=False)
+        vec = np.nan_to_num(vec, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32, copy=False)
+        return vec
