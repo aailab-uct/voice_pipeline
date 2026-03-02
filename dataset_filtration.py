@@ -15,14 +15,13 @@ import librosa
 # Paths
 # ============================================================
 
-# path to preprocessed dataset and metadata
 AUDIO_DIR = Path("dataset")
 METADATA_CSV = Path("dataset/metadata.csv")
+
 
 # ============================================================
 # Public API
 # ============================================================
-
 
 def build_dataset(
     excluded_pathologies: set[str] | None = None,
@@ -33,7 +32,8 @@ def build_dataset(
     selected_datasets: set[str] | None = None,
     selected_fs: int | None = None,
     drop_nan_f0: bool = True,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    return_dataset_names: bool = False,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray] | tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
     Build X, y and groups for sklearn pipeline.
 
@@ -41,137 +41,112 @@ def build_dataset(
         healthy       -> 0
         pathological  -> 1
 
-    Parameters
-    ----------
-    excluded_pathologies : set[str]
-    include_age : bool
-        Condition if add age to X
-    include_sex : bool
-        Condition if add sex to X
-    allowed_vowels : set[str] or None
-        Allowed vowels (for example. {"a", "i"}). None = Without filter.
-    allowed_intonations : set[str] or None
-        Allowed intonation (for example. {"n"}). None = Without filter.
-    selected_datasets : set[str] or None
-        Allowed datasets (for example. {"SVD", "VOICED"}). None
-    selected_fs : int or None
-        It will resample sampling frequency to int or if None, leave original.
-
     Returns
     -------
     X : np.ndarray (dtype=object)
-        All elements: [signal, (age), (sex)]
+        Each element: [signal, (age), (sex)]
     y : np.ndarray
-        Binari label (0 = healthy, 1 = pathological)
+        Binary label (0 = healthy, 1 = pathological)
     groups : np.ndarray
-        talkerID (for GroupKFold).
+        talkerID (for GroupKFold)
+    pathologies_out : np.ndarray
+        string pathology per sample
+    dataset_names : np.ndarray (optional)
+        string dataset name per sample (only if return_dataset_names=True)
     """
-
-    # this replace None for set() which is empty set
     if excluded_pathologies is None:
         excluded_pathologies = set()
 
-    # init of lists
     X = []
     y = []
     groups = []
     pathologies_out = []
+    dataset_names = []
 
-    # loading of new csv metadata file
     with open(METADATA_CSV, newline="", encoding="utf-8") as f:
         rows = list(csv.DictReader(f))
 
-    # tqdm part which in the end show progress bar
     for row in tqdm(rows, desc="Building X, y, groups"):
-        # re labeling of variable
         pathology = row["pathologies"]
 
-        # --- filter unwanted pathologies
         if pathology in excluded_pathologies:
             continue
 
-        # --- filter vowel
         if allowed_vowels is not None and row["vowel"] not in allowed_vowels:
             continue
 
-        # --- filter intonation
         if allowed_intonations is not None and row["intonation"] not in allowed_intonations:
             continue
 
-        # --- filter dataset
         if selected_datasets is not None and row["dataset"] not in selected_datasets:
             continue
 
-        # --- filter nan f0
         if drop_nan_f0 and row.get("nan_f0") == "True":
             continue
 
-        # original name of record
-        original_file = AUDIO_DIR / f"record_{row["id"]}.wav"
-        # name of recrod for resampled records
-        cached_file = AUDIO_DIR / f"record_{row["id"]}_{selected_fs}.wav" if selected_fs is not None else original_file
+        rec_id = row["id"]
+
+        original_file = AUDIO_DIR / f"record_{rec_id}.wav"
+        cached_file = (
+            AUDIO_DIR / f"record_{rec_id}_{selected_fs}.wav"
+            if selected_fs is not None
+            else original_file
+        )
+
         if cached_file.exists():
-            # load of cached records
             signal, fs = sf.read(cached_file, dtype="float32")
         elif original_file.exists():
-            # if there is not cached record, original will be used
             signal, fs = sf.read(original_file, dtype="float32")
-            # control if there is difference betwene original sampling rate and resampled sampling rate
             if selected_fs is not None and fs != selected_fs:
-                # function that resample signal
-                signal = librosa.resample(signal, orig_sr=fs, target_sr=selected_fs, res_type="soxr_vhq")
-                # unification of sampling rates
+                signal = librosa.resample(
+                    signal, orig_sr=fs, target_sr=selected_fs, res_type="soxr_vhq"
+                ).astype(np.float32)
                 fs = selected_fs
-                # change of data type
-                signal = signal.astype(np.float32)
-                # write of resampled recording
-                sf.write(AUDIO_DIR / f"record_{row["id"]}_{selected_fs}.wav", data=signal, samplerate=selected_fs)
+                sf.write(
+                    AUDIO_DIR / f"record_{rec_id}_{selected_fs}.wav",
+                    data=signal,
+                    samplerate=selected_fs,
+                )
         else:
-            print(f"Warning: audio file for record {row["id"]} not found, skipping.")
+            print(f"Warning: audio file for record {rec_id} not found, skipping.")
             continue
-
-        # --- build feature vector
 
         features = [signal]
 
-        # if parameter include age os set
         if include_age:
-            # then row age is converted to int but only if there is not nan
             age = int(row["age"]) if row["age"] else np.nan
             features.append(age)
 
-        # if parameter include sex is set
         if include_sex:
-            # then there is matching (inside convert talkersex to lower signs)
-            match row["talkersex"].lower():
-                # then there is multiple cases what can
-                # happen, it simply unifi different types of sex marking
-                case "f" | "w" | "female" | "woman":
-                    sex = 1
-                case "m" | " male" | "man":
-                    sex = 0
-                case _:
-                    # simple warning when there isnt sex
-                    sex = np.nan
-                    print(f"Warning: unknown sex '{row["talkersex"]}' for record {row["id"]}")
+            s = (row.get("talkersex") or "").strip().lower()
+            if s in {"f", "w", "female", "woman"}:
+                sex = 1
+            elif s in {"m", "male", "man"}:
+                sex = 0
+            else:
+                sex = np.nan
+                print(f"Warning: unknown sex '{row.get('talkersex')}' for record {rec_id}")
             features.append(sex)
 
-        # set binari label by pathologies
         is_healthy = row["pathologies"].lower() == "healthy"
         label = 0 if is_healthy else 1
 
-        # append of features and labels
         X.append(features)
         y.append(label)
-        # append of talkerid
-        groups.append((row["talkerid"]))
-
+        groups.append(row["talkerid"])
         pathologies_out.append(pathology)
+
+        if return_dataset_names:
+            dataset_names.append(row["dataset"])
 
     X = np.array(X, dtype=object)
     y = np.array(y, dtype=int)
     groups = np.array(groups, dtype=str)
     pathologies_out = np.array(pathologies_out, dtype=str)
+
+    if return_dataset_names:
+        dataset_names = np.array(dataset_names, dtype=str)
+        return X, y, groups, pathologies_out, dataset_names
 
     return X, y, groups, pathologies_out
 
@@ -180,20 +155,16 @@ def build_dataset(
 # CLI entry point
 # ============================================================
 
-
 def main():
-    """
-    main function which build dataset from recordings to vectors with data by various filtration
-    """
-    X, y, groups = build_dataset(
+    X, y, groups, pathologies, dataset_names = build_dataset(
         excluded_pathologies={"Sängerstimme", "Gesangsstimme"},
         include_age=True,
         include_sex=True,
         allowed_vowels={"a"},
         allowed_intonations={"n"},
+        return_dataset_names=True,
     )
-
-    print(X.shape, y.shape, groups.shape)
+    print(X.shape, y.shape, groups.shape, pathologies.shape, dataset_names.shape)
 
 
 if __name__ == "__main__":
