@@ -6,32 +6,30 @@ from sklearn.ensemble import RandomForestClassifier
 from custom_classifiers import KANClassifier
 
 sampling_rate = 48000
-resampler_seeds = sorted(set(range(0, 105, 1)) | set(range(100, 1100, 20)))
+# resampler_seeds = sorted(set(range(0, 105, 1)) | set(range(100, 1100, 20)))
 
 config = {
-    "experiment_name": "AVFAD_SVD_experiment",
-    "experiment_description": "combined experiment with both datasets without oversampling, with unificated patologies across AVFAD and SVD",
+    "experiment_name": "afthermath_only_svd",
+    "experiment_description": "first try afther repair of nsp to wav conversion error",
 
     "param_grid": [
         {
             "clf": [RandomForestClassifier(random_state=42, n_jobs=-1)],
-            "clf__n_estimators": [300],
-            "clf__max_depth": [None],
-            "clf__min_samples_split": [2],
-            "clf__min_samples_leaf": [1],
-            "clf__max_features": ["sqrt"],
-            # "clf__class_weight": ["balanced"],  # váhy tříd
-
-            "raw_aug__enabled": [False],
-            "feat_aug__enabled": [False],
-            "feat_aug__std_factor": [0.01],
-            "resampler__random_state": [42],  # může zůstat, ale nebude použito
+            "clf__n_estimators": [200, 400, 600],
+            "clf__max_depth": [None, 5, 10, 20],
+            "clf__min_samples_split": [2, 5, 10],
+            "clf__min_samples_leaf": [1, 2, 4],
+            "clf__max_features": ["sqrt", "log2", None],
+            "clf__class_weight": [None, "balanced"]
         },
     ],
 
     "pipeline": {
         "raw_aug__noise_std": 0.005,
         "raw_aug__random_state": 42,
+        "raw_aug__enabled": False,
+        "feat_aug__enabled": False,
+        "feat_aug__std_factor": 0.01,
 
         "mfcc__sr": sampling_rate,
         "mfcc__n_mfcc": 20,
@@ -56,6 +54,7 @@ config = {
         "resampler__enabled": True,
         "resampler__artificial_only": False,
         "resampler__sampling_strategy": "auto",
+        "resampler__random_state": 42,
 
         "selector__enabled": False,
         "selector__k": 20,
@@ -72,43 +71,12 @@ config = {
         "Sigmatism",
         "Non-fluency-Syndrom",
         "Mutatio"
-        # "Sängerstimme",
-        # "Gesangsstimme",
-        # "Sigmatismus",
-        # "Balbuties",
-        # "Dysodie",
-        # "Poltersyndrom",
-        # "Balbuties, Laryngitis"
-        # "Non-fluency-Syndrom",
-        # "hyperkinetic dysphonia (Prolapse)",
-        # "hypokinetic dysphonia (glottic insufficiency)",
-        # "hyperkinetic dysphonia (Polyps)",
-        # "hypokinetic dysphonia (Vocal fold paralysis)",
-        # "hyperkinetic dysphonia (Reinke's edema)",
-        # "hyperkinetic dysphonia (nodule)",
-        # "hyperkinetic dysphonia (Nodule)",
-        # "hypokinetic dysphonia (Extraglottic air leak)",
-        # "hypokinetic dysphonia (Adduction deficit)",
-        # "hypokinetic dysphonia (Glottic insufficiency)",
-        # "hyperkinetic dysphonia (Vocal fold paralysis)",
-        # "hyperkinetic dysphonia (Vocal fold nodules)",
-        # "hypokinetic dysphonia (Presbiphonia)",
-        # "hyperkinetic dysphonia (Adduction deficit)",
-        # "hyperkinetic dysphonia (Cordite)",
-        # "hypokinetic dysphonia (Spasmodic dysphonia)",
-        # "hypokinetic dysphonia (Bilateral vocal fold)",
-        # "hypokinetic dysphonia (Laryngitis)",
-        # "hyperkinetic dysphonia (polyps)",
-        # "hypokinetic dysphonia (Dysphonia by chordal groove)",
-        # "hyperkinetic dysphonia (Vocal fold prolapse)",
-        # "hypokinetic dysphonia (Conversion dysphonia)",
-        # "hyperkinetic dysphonia  (Rigid vocal fold)",
     },
     "include_age": True,
     "include_sex": True,
     "allowed_vowels": {"a"},
     "allowed_intonations": {"n"},
-    "selected_datasets": {"AVFAD", "SVD"},   # "SVD"
+    "selected_datasets": {"SVD"},   # "SVD" "AVFAD"
     "selected_fs": sampling_rate,
 }
 
