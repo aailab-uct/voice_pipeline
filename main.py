@@ -39,12 +39,17 @@ from feature_extraction import (
     TimeDomainFeaturesExtractor,
     ZCRExtractor,
     SpectralFeaturesExtractor,
+    OpenSmileExtractor
 )
 from signal_augmenters import RawAugmenter
 from feature_augmenters import FeatureAugmenter
 from oversampling import SMOTESampler, VAESampler
 from dataset_filtration import build_dataset
 from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.feature_selection import SelectFromModel
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.feature_selection import RFECV
+
 
 import warnings
 
@@ -89,10 +94,38 @@ def build_pipeline(pipeline_params: dict | None = None, random_state: int = 42) 
                                                        f0_range_f=(100.0, 600.0),)),
             ("zcr", ZCRExtractor(sr=50000, enabled=True)),
             ("spectral", SpectralFeaturesExtractor(sr=50000, enabled=True)),
+            ("opensmile", OpenSmileExtractor(
+                enabled=False,
+                sr=50000,
+                feature_set="GeMAPS", # GeMAPS, ComParE_2016
+                feature_level="functionals",
+            )),
             ("drop_sig", DropSignalColumn()),
             ("replace_nan", ReplaceNaN()),
             ("scaler", StandardScaler()),
             ("selector", SelectKBest(score_func=mutual_info_classif, k=20)),
+            # ("selector", RFECV(
+            #     estimator=RandomForestClassifier(
+            #         n_estimators=300,
+            #         random_state=42,
+            #         n_jobs=-1,
+            #         class_weight="balanced",
+            #     ),
+            #     step=0.1,
+            #     cv=5,
+            #     scoring="balanced_accuracy",
+            #     n_jobs=-1,
+            # )),
+
+            # ("selector", SelectFromModel(
+            #     estimator=RandomForestClassifier(
+            #         n_estimators=300,
+            #         random_state=42,
+            #         n_jobs=-1,
+            #         class_weight="balanced",
+            #     ),
+            #     threshold="median",
+            # )),
             ("feat_aug", FeatureAugmenter(enabled=True, std_factor=0.02, random_state=random_state)),
             # artificial only means that real samples are discarded
             # sampling strategi set how much there will be samples in the end, {0:1000, 1:1000} for each class
@@ -435,6 +468,6 @@ if __name__ == "__main__":
     )
     _ = parser.parse_args()
 
-    parsed_config = import_module("config").config
+    parsed_config = import_module("config_experimental").config
     print(parsed_config)
     main(parsed_config)
