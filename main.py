@@ -1,3 +1,4 @@
+# main.py
 """Main entry point for minimal voice classification pipeline."""
 
 from typing import Any
@@ -46,6 +47,79 @@ class ReplaceNaN(BaseEstimator, TransformerMixin):
         return np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
 
 
+def _sanitize_filename(name: str) -> str:
+    keep = []
+    for ch in name:
+        if ch.isalnum() or ch in ("_", "."):
+            keep.append(ch)
+        else:
+            keep.append("_")
+    return "".join(keep).strip("_")
+
+
+def _transform_until_scaler(pipeline: ImbPipeline, X: np.ndarray) -> np.ndarray:
+    X_tmp = X
+    for step_name, step in pipeline.steps:
+        if not hasattr(step, "transform"):
+            continue
+        X_tmp = step.transform(X_tmp)
+        if step_name == "scaler":
+            break
+    return np.asarray(X_tmp, dtype=np.float32)
+
+
+def _feature_names_after_drop_sig(pipeline: ImbPipeline, include_age: bool, include_sex: bool) -> list[str]:
+    names: list[str] = ["signal"]
+    if include_age:
+        names.append("age")
+    if include_sex:
+        names.append("sex")
+
+    for step_name in ("mfcc", "timedomain", "zcr", "spectral"):
+        step = pipeline.named_steps.get(step_name)
+        if step is None:
+            continue
+        if hasattr(step, "enabled") and not getattr(step, "enabled"):
+            continue
+        if hasattr(step, "appended_feature_names"):
+            names += list(step.appended_feature_names())
+
+    drop = pipeline.named_steps.get("drop_sig")
+    if drop is not None and hasattr(drop, "get_feature_names_out"):
+        out = drop.get_feature_names_out(names)
+        if out is not None:
+            return [str(x) for x in list(out)]
+    return names[1:]
+
+
+def save_feature_histograms(
+    X_scaled: np.ndarray,
+    feature_names: list[str],
+    dataset_names: np.ndarray,
+    out_dir: Path,
+    bins: int = 60,
+) -> None:
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    ds_values = [str(x) for x in np.unique(dataset_names)]
+    for j, fname in enumerate(feature_names):
+        plt.figure(figsize=(8, 4.5))
+        for ds in ds_values:
+            mask = (dataset_names.astype(str) == ds)
+            if not np.any(mask):
+                continue
+            plt.hist(X_scaled[mask, j], bins=bins, alpha=0.5, label=ds)
+
+        plt.title(fname)
+        plt.xlabel("scaled value")
+        plt.ylabel("count")
+        plt.legend()
+        plt.tight_layout()
+        fpath = out_dir / f"{j:03d}_{_sanitize_filename(fname)}.png"
+        plt.savefig(fpath, dpi=150)
+        plt.close()
+
+
 def build_pipeline(random_state: int = 42) -> ImbPipeline:
     return ImbPipeline(
         steps=[
@@ -84,81 +158,56 @@ def log_results(
     with (run_dir / "gridsearch.txt").open("w", encoding="utf-8") as f:
         if "mean_test_bal_acc" in cv_results:
             f.write(f"Best BAL_ACC: {np.nanmax(cv_results['mean_test_bal_acc'])}\n")
-        if "mean_test_acc" in cv_results:
-            f.write(f"Best ACC: {np.nanmax(cv_results['mean_test_acc'])}\n")
-        f.write(f"Machine: {socket.gethostname()}\n")
-
-        if experiment_description is not None:
-            f.write(experiment_description)
-
+        if experiment_description:
+            f.write(f"Description: {experiment_description}\n")
         if config is not None:
-            f.write("\n\nConfiguration:\n")
-            for k, v in config.items():
-                f.write(f"{k}: {v}\n")
+            f.write("\nConfig:\n")
+            f.write(repr(config))
+            f.write("\n")
+
+        f.write("\n\nSystem:\n")
+        f.write(f"Host: {socket.gethostname()}\n")
+        f.write(f"Python: {sys.version}\n")
 
     return run_dir
 
 
 @contextmanager
-def tqdm_from_verbose(total, desc="GridSearch", unit="fit"):
-    pbar = tqdm(total=total, desc=desc, unit=unit)
-    old_stdout = sys.stdout
+def tqdm_from_verbose(total: int):
+    pbar = tqdm(total=total)
 
-    class StdoutProxy:
-        def write(self, s):
-            old_stdout.write(s)
-            if "[CV] END" in s:
-                pbar.update(1)
+    orig = GridSearchCV._run_search  # type: ignore[attr-defined]
 
-        def flush(self):
-            old_stdout.flush()
+    def _wrapped(self, evaluate_candidates):
+        def _eval(candidates):
+            pbar.update(len(candidates))
+            return evaluate_candidates(candidates)
+        return orig(self, _eval)
 
-    sys.stdout = StdoutProxy()
+    GridSearchCV._run_search = _wrapped  # type: ignore[attr-defined]
     try:
         yield
     finally:
-        sys.stdout = old_stdout
+        GridSearchCV._run_search = orig  # type: ignore[attr-defined]
         pbar.close()
 
 
-def main(config: dict[str, Any] | None = None):
-    if config is None:
-        config = {
-            "task": "dataset_origin",  # "pathology" or "dataset_origin"
-            "param_grid": [
-                {
-                    "clf__strategy": ["most_frequent"],
-                }
-            ],
-        }
-
+def main(config: dict[str, Any]) -> None:
     task = config.get("task", "pathology")
 
-    if task == "dataset_origin":
-        X, _y_path, groups, _pathologies, dataset_names = build_dataset(
-            excluded_pathologies=config.get("excluded_pathologies", set()),
-            include_age=config.get("include_age", True),
-            include_sex=config.get("include_sex", True),
-            allowed_vowels=config.get("allowed_vowels", {"a"}),
-            allowed_intonations=config.get("allowed_intonations", {"n"}),
-            selected_datasets=config.get("selected_datasets", {"SVD", "VOICED"}),
-            selected_fs=config.get("selected_fs", 50000),
-            drop_nan_f0=config.get("drop_nan_f0", True),
-            return_dataset_names=True,
-        )
-        y_raw = np.asarray(dataset_names)
-    else:
-        X, y, groups, _pathologies = build_dataset(
-            excluded_pathologies=config.get("excluded_pathologies", set()),
-            include_age=config.get("include_age", True),
-            include_sex=config.get("include_sex", True),
-            allowed_vowels=config.get("allowed_vowels", {"a"}),
-            allowed_intonations=config.get("allowed_intonations", {"n"}),
-            selected_datasets=config.get("selected_datasets", {"SVD", "VOICED"}),
-            selected_fs=config.get("selected_fs", 50000),
-            drop_nan_f0=config.get("drop_nan_f0", True),
-        )
-        y_raw = np.asarray(y)
+    X, y_bin, groups, _pathologies, dataset_names = build_dataset(
+        excluded_pathologies=config.get("excluded_pathologies", set()),
+        include_age=config.get("include_age", True),
+        include_sex=config.get("include_sex", True),
+        allowed_vowels=config.get("allowed_vowels", {"a"}),
+        allowed_intonations=config.get("allowed_intonations", {"n"}),
+        selected_datasets=config.get("selected_datasets", {"SVD", "VOICED"}),
+        selected_fs=config.get("selected_fs", 50000),
+        drop_nan_f0=config.get("drop_nan_f0", True),
+        return_dataset_names=True,
+    )
+
+    y_raw = np.asarray(dataset_names) if task == "dataset_origin" else np.asarray(y_bin)
 
     groups = LabelEncoder().fit_transform(np.asarray(groups))
     y = LabelEncoder().fit_transform(y_raw)
@@ -203,6 +252,24 @@ def main(config: dict[str, Any] | None = None):
         config=config,
     )
 
+    # feature histograms (scaled; per dataset)
+    try:
+        X_scaled = _transform_until_scaler(gs.best_estimator_, X)
+        feat_names = _feature_names_after_drop_sig(
+            gs.best_estimator_,
+            include_age=config.get("include_age", True),
+            include_sex=config.get("include_sex", True),
+        )
+        save_feature_histograms(
+            X_scaled,
+            feat_names,
+            dataset_names,
+            out_dir=run_dir / "feature_histograms_scaled",
+            bins=config.get("hist_bins", 60),
+        )
+    except Exception as e:
+        print("Histogram export failed:", repr(e))
+
     # jen ať je vidět kam se to uložilo
     (run_dir / "done.txt").write_text("OK\n", encoding="utf-8")
 
@@ -213,11 +280,12 @@ if __name__ == "__main__":
         "config_file",
         nargs="?",
         type=str,
-        default="config.py",
-        help="Path to python file to load configuration from (default: config.py)",
+        default="config_experimental",
+        help="Python module path to config dict, e.g. configs.exp_0",
     )
-    _ = parser.parse_args()
+    args = parser.parse_args()
 
-    parsed_config = import_module("config_experimental").config
-    print(parsed_config)
-    main(parsed_config)
+    mod = import_module(args.config_file)
+    cfg = getattr(mod, "config")
+
+    main(cfg)
