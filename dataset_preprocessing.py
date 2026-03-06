@@ -1,4 +1,14 @@
-"""Module for preprocessing raw datasets into a standardized format."""
+"""
+Module for preprocessing raw datasets into a standardized format (BASELINE).
+
+Baseline = no bandpass, no preemphasis, no global RMS normalization, no peak safety.
+Only:
+- load audio
+- convert to mono float
+- trim silence
+- (AVFAD only) optionally crop first repetition
+- save WAV + metadata
+"""
 
 # ============================================================
 # Imports
@@ -56,10 +66,6 @@ MIN_AGE = 18
 
 
 def is_adult(age) -> bool:
-    """
-    Return True if age is numeric and >= MIN_AGE. Otherwise False.
-    Handles None, strings, floats safely.
-    """
     if age is None:
         return False
     try:
@@ -79,29 +85,19 @@ F0_RANGES = {
 
 DEFAULT_F0_RANGE = (60.0, 250.0)
 
+
 def normalize_sex_mf(value):
-    """
-    Normalize sex/gender to 'm' or 'f'.
-    Returns None if unknown.
-    """
     if value is None:
         return None
-
     s = str(value).strip().lower()
-
     if s in {"m", "male", "man"}:
         return "m"
-
-    # SVD uses 'w' for women
     if s in {"f", "female", "woman", "w"}:
         return "f"
-
     if s == "0":
         return "m"
-
     if s == "1":
         return "f"
-
     return None
 
 
@@ -115,6 +111,7 @@ def f0_range_for_sex(sex_mf):
 
 PVQD_ROOT = Path("data") / "PVQD"
 PVQD_DEMOGRAPHICS_XLSX = PVQD_ROOT / "Demographics.xlsx"
+
 
 def load_pvqd_metadata(xlsx_path: Path):
     df = openpyxl.load_workbook(xlsx_path, data_only=True).active
@@ -137,6 +134,7 @@ def load_pvqd_metadata(xlsx_path: Path):
         )
     return out
 
+
 def normalize_pvqd_pathology(value):
     if value is None:
         return "healthy"
@@ -144,64 +142,60 @@ def normalize_pvqd_pathology(value):
     if not s:
         return "healthy"
     s_low = s.lower()
-
-    # PVQD sheet uses N for normal, and sometimes Y as "has pathology"
     if s_low in {"n", "normal"}:
         return "healthy"
     if s_low == "y":
         return "pathology"
-
-    # keep original text but normalize whitespace around commas
     s = re.sub(r"\s*,\s*", ", ", s.strip())
     s = re.sub(r"\s+", " ", s)
     return s
 
+
 def pvqd_is_a_vowel_file(fname: str, participant_id: str) -> bool:
-    """
-    Heuristic: filename must contain participant_id and an 'a' token.
-    Works for common patterns like:
-      BL01_a.wav, BL01-a.wav, BL01_vowel_a.wav, BL01_A.wav
-    """
     f = fname.lower()
     pid = participant_id.lower()
-
     if pid not in f:
         return False
-
     base = Path(f).stem
-
-    # accept token a separated by _ or -
     if re.search(rf"(^|[_-])a([_-]|$)", base):
         return True
-
-    # accept explicit 'vowel a' like patterns
     if "vowel" in base and re.search(r"vowel[_-]?a", base):
         return True
-
     return False
 
-def process_pvqd_file(wav_path: Path, src_row: dict, writer, record_idx: int) -> int:
 
+def _pvqd_load_prepare_signal(wav_path: Path, src_row: dict) -> tuple[np.ndarray, int] | None:
     if not is_adult(src_row.get("age")):
-        return record_idx
+        return None
 
     x, fs = sf.read(wav_path, dtype=np.float32)
+    fs = int(fs)
 
     if isinstance(x, np.ndarray) and x.ndim == 2:
         x = x[:, 0]
 
     x, _ = librosa.effects.trim(x, top_db=15)
+    x = np.asarray(x, dtype=np.float32)
+    return x, fs
+
+
+def process_pvqd_file(wav_path: Path, src_row: dict, writer, record_idx: int) -> int:
+    prepared = _pvqd_load_prepare_signal(wav_path, src_row)
+    if prepared is None:
+        return record_idx
+
+    x, fs = prepared
 
     sex_mf = normalize_sex_mf(src_row.get("sex"))
     fmin, fmax = f0_range_for_sex(sex_mf)
 
-    sound = parselmouth.Sound(x, sampling_frequency=int(fs))
+    sound = parselmouth.Sound(x, sampling_frequency=fs)
     pitch = call(sound, "To Pitch", 0.0, fmin, fmax)
     mean_f0 = call(pitch, "Get mean", 0, 0, "Hertz")
 
     record_id = f"{record_idx:04d}"
     wav_name = f"record_{record_id}.wav"
-    sf.write(OUT_DIR / wav_name, x, int(fs))
+    sf.write(OUT_DIR / wav_name, x, fs)
 
     row = {
         "id": record_id,
@@ -220,25 +214,13 @@ def process_pvqd_file(wav_path: Path, src_row: dict, writer, record_idx: int) ->
     writer.writerow(row)
     return record_idx + 1
 
+
 # ============================================================
 # ======================= SVD DATASET ========================
 # ============================================================
 
 SESSION_ID_TO_DELETE = {
-    1573,
-    87,
-    1372,
-    2088,
-    2077,
-    2070,
-    2081,
-    2426,
-    2428,
-    2448,
-    2450,
-    2451,
-    2457,
-    713,
+    1573, 87, 1372, 2088, 2077, 2070, 2081, 2426, 2428, 2448, 2450, 2451, 2457, 713,
 }
 
 SVD_ROOT = Path("data", "SVD")
@@ -248,8 +230,7 @@ SVD_PATTERN = re.compile(r"(?P<id>\d+)-(?P<vowel>[a-z]+)_(?P<intonation>[a-z]+)\
 
 def load_svd_metadata(csv_path: Path):
     with open(csv_path, newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        return list(reader)
+        return list(csv.DictReader(f))
 
 
 def normalize_pathology(value):
@@ -259,55 +240,62 @@ def normalize_pathology(value):
     return value if value else "healthy"
 
 
-def process_svd_file(nsp_path: Path, metadata, writer, record_idx):
-
+def _svd_load_prepare_signal(nsp_path: Path, metadata) -> tuple[np.ndarray, int, dict, dict] | None:
     m = SVD_PATTERN.fullmatch(nsp_path.name)
     if not m:
-        return record_idx
-
+        return None
     parts = m.groupdict()
     speaker_id = parts["id"]
 
-    src = next((m for m in metadata if m.get("talkerid") == speaker_id), None)
+    src = next((mm for mm in metadata if mm.get("talkerid") == speaker_id), None)
     if not src:
-        return record_idx
+        return None
 
     if not is_adult(src.get("talkerage")):
-        return record_idx
+        return None
 
     session_id = src.get("sessionid")
     if session_id is not None and int(session_id) in SESSION_ID_TO_DELETE:
-        return record_idx
-
-    record_id = f"{record_idx:04d}"
-    wav_name = f"record_{record_id}.wav"
+        return None
 
     try:
         fs, x = nspfile.read(nsp_path)
     except RuntimeError as e:
         print(f"Warning: failed to read {nsp_path}: {e}")
-        return record_idx
+        return None
 
     fs = int(fs)
     x = np.asarray(x)
 
-    # pokud je víc kanálů, udělej mono (trim i parselmouth jsou nejjistější pro 1D)
     if x.ndim > 1:
         x = x.mean(axis=1)
 
-    # PCM integer -> float [-1, 1]
+    # decode to float [-1,1] (necessary)
     if np.issubdtype(x.dtype, np.integer):
         x = x.astype(np.float32) / 32768.0
     else:
         x = x.astype(np.float32)
-        m = float(np.max(np.abs(x))) if x.size else 0.0
-        if m > 1.0:
-            x /= m
+        mmax = float(np.max(np.abs(x))) if x.size else 0.0
+        if mmax > 1.0:
+            x /= mmax
 
     x, _ = librosa.effects.trim(
         x, top_db=15, frame_length=256 * fs // 50000, hop_length=65 * fs // 50000
     )
 
+    x = np.asarray(x, dtype=np.float32)
+    return x, fs, src, parts
+
+
+def process_svd_file(nsp_path: Path, metadata, writer, record_idx):
+    prepared = _svd_load_prepare_signal(nsp_path, metadata)
+    if prepared is None:
+        return record_idx
+
+    x, fs, src, parts = prepared
+
+    record_id = f"{record_idx:04d}"
+    wav_name = f"record_{record_id}.wav"
     sf.write(OUT_DIR / wav_name, x, fs)
 
     sex_mf = normalize_sex_mf(src.get("talkersex"))
@@ -348,7 +336,6 @@ def extract_number(text):
 
 
 def parse_voiced_info(info_path: Path):
-
     meta = {}
     with open(info_path, encoding="utf-8") as f:
         for line in f:
@@ -358,43 +345,45 @@ def parse_voiced_info(info_path: Path):
     return meta
 
 
-def process_voiced_file(dat_path: Path, writer, record_idx):
-
+def _voiced_load_prepare_signal(dat_path: Path) -> tuple[np.ndarray, int, dict, str] | None:
     base = dat_path.stem
     info_path = dat_path.with_name(f"{base}-info.txt")
-
     if not info_path.exists():
-        return record_idx
+        return None
 
     info = parse_voiced_info(info_path)
-
     if not is_adult(info.get("age")):
-        return record_idx
+        return None
 
     record = wfdb.rdrecord(str(dat_path.with_suffix("")))
-
     x = record.p_signal.squeeze()
     fs = int(record.fs)
-    x = np.array(x, dtype=np.float32)
+    x = np.asarray(x, dtype=np.float32)
 
     x, _ = librosa.effects.trim(
         x, top_db=15, frame_length=256 * fs // 50000, hop_length=65 * fs // 50000
     )
+
+    x = np.asarray(x, dtype=np.float32)
+    return x, fs, info, base
+
+
+def process_voiced_file(dat_path: Path, writer, record_idx):
+    prepared = _voiced_load_prepare_signal(dat_path)
+    if prepared is None:
+        return record_idx
+
+    x, fs, info, base = prepared
 
     sex_mf = normalize_sex_mf(info.get("gender"))
     fmin, fmax = f0_range_for_sex(sex_mf)
 
     sound = parselmouth.Sound(x, sampling_frequency=fs)
     pitch = call(sound, "To Pitch", 0.0, fmin, fmax)
-
-    pitch_data = pitch.selected_array["frequency"]
-    pitch_data[pitch_data == 0] = np.nan
-
     mean_f0 = call(pitch, "Get mean", 0, 0, "Hertz")
 
     record_id = f"{record_idx:04d}"
     wav_name = f"record_{record_id}.wav"
-
     sf.write(OUT_DIR / wav_name, x, fs)
 
     row = {
@@ -433,7 +422,6 @@ AVFAD_CROP_TO_ONE_REP = True
 
 
 def load_avfad_metadata(xlsx_path: Path):
-
     wb = openpyxl.load_workbook(xlsx_path, data_only=True)
     ws = wb[AVFAD_SHEET]
 
@@ -444,11 +432,9 @@ def load_avfad_metadata(xlsx_path: Path):
 
     out = []
     for r in rows:
-
         file_id = r[col["File ID"]]
         if file_id is None:
             continue
-
         out.append(
             {
                 "file_id": str(file_id).strip(),
@@ -457,67 +443,62 @@ def load_avfad_metadata(xlsx_path: Path):
                 "pathology": r[col["CMVD-I Dimension 1 (word system)"]],
             }
         )
-
     return out
 
 
 def find_avfad_wav(file_id: str, suffix: str) -> Path | None:
-
     name = f"{file_id}{suffix}.wav"
     return next(AVFAD_ROOT.rglob(name), None)
 
 
-def process_avfad_file(wav_path: Path, src_row: dict, vowel: str, writer, record_idx: int) -> int:
-
+def _avfad_load_prepare_signal(wav_path: Path, src_row: dict) -> tuple[np.ndarray, int, str, str | None] | None:
     if not is_adult(src_row.get("age")):
-        return record_idx
+        return None
 
     x, fs = sf.read(wav_path, dtype=np.float32)
+    fs = int(fs)
 
     if isinstance(x, np.ndarray) and x.ndim == 2:
         x = x[:, 0]
 
-    # odstranění ticha na okrajích
     x, _ = librosa.effects.trim(x, top_db=15)
 
-    # vyříznutí první repetice samohlásky
     if AVFAD_CROP_TO_ONE_REP:
         intervals = librosa.effects.split(x, top_db=20)
         if len(intervals):
             a, b = intervals[0]
             x = x[a:b]
 
+    x = np.asarray(x, dtype=np.float32)
+
     sex_mf = normalize_sex_mf(src_row.get("sex"))
+    p = normalize_pathology(str(src_row.get("pathology")) if src_row.get("pathology") is not None else None)
+    if p.strip().lower() == "normal":
+        p = "healthy"
+
+    return x, fs, p, sex_mf
+
+
+def process_avfad_file(wav_path: Path, src_row: dict, vowel: str, writer, record_idx: int) -> int:
+    prepared = _avfad_load_prepare_signal(wav_path, src_row)
+    if prepared is None:
+        return record_idx
+
+    x, fs, p, sex_mf = prepared
+
     fmin, fmax = f0_range_for_sex(sex_mf)
 
-    # bezpečný výpočet F0 (skip problematických souborů)
     try:
-        sound = parselmouth.Sound(x, sampling_frequency=int(fs))
+        sound = parselmouth.Sound(x, sampling_frequency=fs)
         pitch = call(sound, "To Pitch", 0.0, fmin, fmax)
         mean_f0 = call(pitch, "Get mean", 0, 0, "Hertz")
-    except Exception as e:
-        print(
-            "AVFAD skipped:",
-            src_row.get("file_id"),
-            wav_path.name,
-            "fs=", fs,
-            "len=", len(x)/fs
-        )
+    except Exception:
+        print("AVFAD skipped:", src_row.get("file_id"), wav_path.name, "fs=", fs, "len=", len(x) / fs)
         return record_idx
 
     record_id = f"{record_idx:04d}"
     wav_name = f"record_{record_id}.wav"
-
-    sf.write(OUT_DIR / wav_name, x, int(fs))
-
-    p = normalize_pathology(
-        str(src_row.get("pathology"))
-        if src_row.get("pathology") is not None
-        else None
-    )
-
-    if p.strip().lower() == "normal":
-        p = "healthy"
+    sf.write(OUT_DIR / wav_name, x, fs)
 
     row = {
         "id": record_id,
@@ -542,11 +523,9 @@ def process_avfad_file(wav_path: Path, src_row: dict, vowel: str, writer, record
 # ============================================================
 
 def build_dataset():
-
     svd_metadata = load_svd_metadata(SVD_METADATA_CSV)
 
     with open(OUT_CSV, "w", newline="", encoding="utf-8") as f:
-
         writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS)
         writer.writeheader()
 
@@ -559,21 +538,20 @@ def build_dataset():
             idx = process_voiced_file(p, writer, idx)
 
         avfad_meta = load_avfad_metadata(AVFAD_XLSX)
-
         for r in tqdm(avfad_meta, desc="Processing AVFAD"):
             for suffix, vowel in AVFAD_FILES.items():
-                p = find_avfad_wav(r["file_id"], suffix)
-                if p is None:
+                wp = find_avfad_wav(r["file_id"], suffix)
+                if wp is None:
                     continue
-                idx = process_avfad_file(p, r, vowel, writer, idx)
+                idx = process_avfad_file(wp, r, vowel, writer, idx)
 
-        # PVQD
         pvqd_meta = load_pvqd_metadata(PVQD_DEMOGRAPHICS_XLSX)
         for r in tqdm(pvqd_meta, desc="Processing PVQD"):
             pid = r["participant_id"]
             for p in PVQD_ROOT.rglob("*.wav"):
                 if pvqd_is_a_vowel_file(p.name, pid):
                     idx = process_pvqd_file(p, r, writer, idx)
+
 
 if __name__ == "__main__":
     build_dataset()

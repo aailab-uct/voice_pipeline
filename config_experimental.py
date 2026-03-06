@@ -7,8 +7,8 @@ sampling_rate = 48000
 
 config = {
     "task": "dataset_origin",
-    "experiment_name": "dataset_origin_rf",
-    "experiment_description": "classify which dataset a recording comes from",
+    "experiment_name": "domain_achift_experiment_2",
+    "experiment_description": "without skewness and flatness",
 
     "param_grid": [
         {
