@@ -43,7 +43,151 @@ class HashableDict:
 # Cache setup (joblib compatible)
 # ------------------------------------------------------------
 
-cache = Memory(location="cache", verbose=0)
+# Cache setup — při paralelním grid searchi (n_jobs != 1) na Windows
+# způsobuje joblib cache PermissionError kvůli file lockingu.
+# Cache je užitečná pouze při single-process spuštění.
+import os
+_CACHE_DIR = "cache" if os.environ.get("DISABLE_FEATURE_CACHE", "0") == "0" else None
+cache = Memory(location=_CACHE_DIR, verbose=0)
+
+
+import scipy.signal as scipy_signal
+
+class AudioPreprocessor(BaseEstimator, TransformerMixin):
+    """
+    Preprocessing surového audio signálu pro redukci domain shiftu.
+    Musí být první krok pipeline před feature extraktory.
+
+    Metody se aplikují vždy v tomto pevném pořadí (pokud jsou zapnuty):
+        1. rir_normalization    — kompenzace akustiky místnosti (cepstrální dekonvoluce)
+        2. wiener               — Wiener filtr pro redukci šumu
+        3. spectral_subtraction — odečtení odhadnutého spektra šumu
+
+    Params:
+        enabled:                    zapnutí/vypnutí celého preprocessingu
+        use_rir_normalization:      True/False
+        use_wiener:                 True/False
+        use_spectral_subtraction:   True/False
+        sr:                         vzorkovací kmitočet
+        noise_frames:               počet úvodních framů pro odhad šumu
+        wiener_noise_std:           odhadnutý std šumu pro Wiener filtr
+        rir_ir_len_ms:              délka odhadované impulsní odezvy v ms
+    """
+    def __init__(
+        self,
+        enabled: bool = True,
+        use_rir_normalization: bool = False,
+        use_wiener: bool = False,
+        use_spectral_subtraction: bool = True,
+        sr: int = 50000,
+        noise_frames: int = 10,
+        wiener_noise_std: float = 0.005,
+        rir_ir_len_ms: int = 50,
+    ):
+        self.enabled = enabled
+        self.use_rir_normalization = use_rir_normalization
+        self.use_wiener = use_wiener
+        self.use_spectral_subtraction = use_spectral_subtraction
+        self.sr = sr
+        self.noise_frames = noise_frames
+        self.wiener_noise_std = wiener_noise_std
+        self.rir_ir_len_ms = rir_ir_len_ms
+
+    def fit(self, X, y=None):
+        return self
+
+    def transform(self, X, y=None):
+        if not self.enabled:
+            return X
+
+        X_out = []
+        for row in X:
+            signal = np.asarray(row[0], dtype=np.float32)
+
+            # pevné pořadí: RIR → Wiener → Spectral subtraction
+            if self.use_rir_normalization:
+                signal = self._rir_normalization(signal)
+            if self.use_wiener:
+                signal = self._wiener(signal)
+            if self.use_spectral_subtraction:
+                signal = self._spectral_subtraction(signal)
+
+            new_row = row.copy()
+            new_row[0] = signal
+            X_out.append(new_row)
+
+        return np.array(X_out, dtype=object)
+
+    def _spectral_subtraction(self, x: np.ndarray) -> np.ndarray:
+        n_fft = 2048 * self.sr // 50000
+        hop = 512 * self.sr // 50000
+
+        # STFT
+        f, t, stft = scipy_signal.stft(x, fs=self.sr, nperseg=n_fft, noverlap=n_fft - hop)
+        magnitude = np.abs(stft)
+        phase = np.angle(stft)
+
+        # odhad šumu z prvních N framů
+        noise_est = np.mean(magnitude[:, :self.noise_frames], axis=1, keepdims=True)
+
+        # odečtení šumu s half-wave rectification
+        magnitude_clean = np.maximum(magnitude - noise_est, 0.0)
+
+        # rekonstrukce signálu
+        stft_clean = magnitude_clean * np.exp(1j * phase)
+        _, x_clean = scipy_signal.istft(stft_clean, fs=self.sr, nperseg=n_fft, noverlap=n_fft - hop)
+
+        # zarovnání délky
+        x_clean = x_clean[:len(x)].astype(np.float32)
+        return x_clean
+
+    def _wiener(self, x: np.ndarray) -> np.ndarray:
+        n_fft = 2048 * self.sr // 50000
+        hop = 512 * self.sr // 50000
+
+        f, t, stft = scipy_signal.stft(x, fs=self.sr, nperseg=n_fft, noverlap=n_fft - hop)
+        power = np.abs(stft) ** 2
+
+        # odhad výkonu šumu z prvních N framů
+        noise_power = np.mean(power[:, :self.noise_frames], axis=1, keepdims=True)
+        noise_power = np.maximum(noise_power, 1e-10)
+
+        # Wiener filtr: H = (P_signal) / (P_signal + P_noise)
+        wiener_gain = np.maximum(power - noise_power, 0.0) / (power + noise_power + 1e-10)
+        stft_clean = wiener_gain * stft
+
+        _, x_clean = scipy_signal.istft(stft_clean, fs=self.sr, nperseg=n_fft, noverlap=n_fft - hop)
+        x_clean = x_clean[:len(x)].astype(np.float32)
+        return x_clean
+
+    def _rir_normalization(self, x: np.ndarray) -> np.ndarray:
+        ir_len = int(self.rir_ir_len_ms * self.sr / 1000)
+
+        # odhad impulsní odezvy pomocí cepstra
+        # log spektrum → ifft → okénkování na délku IR → fft → dekonvoluce
+        n_fft = max(2048 * self.sr // 50000, ir_len * 2)
+
+        X_freq = np.fft.rfft(x, n=n_fft)
+        log_mag = np.log(np.abs(X_freq) + 1e-10)
+        cepstrum = np.fft.irfft(log_mag)
+
+        # okénkování — ponech jen pozdní část (odezva místnosti)
+        win = np.zeros_like(cepstrum)
+        win[ir_len:ir_len * 2] = 1.0
+        rir_est = np.real(np.fft.rfft(cepstrum * win, n=n_fft))
+
+        # dekonvoluce: X_clean = X / RIR v frekvenční doméně
+        rir_freq = np.fft.rfft(np.fft.irfft(rir_est)[:ir_len], n=n_fft)
+        rir_power = np.abs(rir_freq) ** 2
+        # regularizovaná dekonvoluce
+        gain = np.conj(rir_freq) / (rir_power + 1e-6 * np.max(rir_power))
+        x_clean = np.fft.irfft(X_freq * gain, n=n_fft)
+
+        x_clean = x_clean[:len(x)].astype(np.float32)
+        # normalizace amplitudy
+        if np.max(np.abs(x_clean)) > 1e-8:
+            x_clean = x_clean / np.max(np.abs(x_clean)) * np.max(np.abs(x))
+        return x_clean
 
 
 # ============================================================
@@ -214,7 +358,6 @@ class TimeDomainFeaturesExtractor(FeatureExtractor):
 
     @staticmethod
     def _entropy_from_signal(x: np.ndarray, bins: int = 128) -> float:
-        # robust entropy: histogram of amplitudes
         x = np.asarray(x, dtype=np.float32)
         if x.size == 0:
             return 0.0

@@ -111,6 +111,13 @@ def build_dataset(
             print(f"Warning: audio file for record {rec_id} not found, skipping.")
             continue
 
+        # --- PŘIDAT SEM ---
+        duration_ms = len(signal) / fs * 1000
+        if duration_ms < 100:
+            print(f"Krátká nahrávka: record_{rec_id}, {duration_ms:.0f}ms, dataset={row['dataset']}")
+            continue
+        # --- KONEC ---
+
         features = [signal]
 
         if include_age:

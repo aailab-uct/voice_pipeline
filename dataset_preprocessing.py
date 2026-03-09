@@ -30,6 +30,45 @@ import openpyxl
 
 
 # ============================================================
+# Preprocessing parameters
+# ============================================================
+
+# True  = ořezat ticho na začátku i na konci nahrávky
+# False = ořezat ticho pouze na konci nahrávky (začátek zachován)
+TRIM_LEADING_SILENCE = False
+
+# True  = normalizovat amplitudu na rozsah [-1, 1] (peak normalizace)
+# False = ponechat původní amplitudu
+NORMALIZE_AMPLITUDE = True
+
+
+def normalize_amplitude(x: np.ndarray) -> np.ndarray:
+    """Peak normalizace signálu do rozsahu [-1, 1]."""
+    if not NORMALIZE_AMPLITUDE:
+        return x
+    if np.issubdtype(x.dtype, np.integer):
+        x = x.astype(np.float32) / 32768.0
+    else:
+        x = x.astype(np.float32)
+        mmax = float(np.max(np.abs(x))) if x.size else 0.0
+        if mmax > 0.0:
+            x /= mmax
+    return x
+
+
+def trim_silence(x: np.ndarray, top_db: float = 15, **kwargs) -> np.ndarray:
+    """Ořízne ticho na konci (vždy) a volitelně i na začátku nahrávky."""
+    if TRIM_LEADING_SILENCE:
+        x, _ = librosa.effects.trim(x, top_db=top_db, **kwargs)
+    else:
+        # Ořez pouze konce: obrátíme signál, ořežeme začátek (= původní konec), obrátíme zpět
+        x_rev = x[::-1]
+        x_rev, _ = librosa.effects.trim(x_rev, top_db=top_db, **kwargs)
+        x = x_rev[::-1]
+    return np.asarray(x, dtype=np.float32)
+
+
+# ============================================================
 # Output
 # ============================================================
 
@@ -174,8 +213,8 @@ def _pvqd_load_prepare_signal(wav_path: Path, src_row: dict) -> tuple[np.ndarray
     if isinstance(x, np.ndarray) and x.ndim == 2:
         x = x[:, 0]
 
-    x, _ = librosa.effects.trim(x, top_db=15)
-    x = np.asarray(x, dtype=np.float32)
+    x = normalize_amplitude(x)
+    x = trim_silence(x, top_db=15)
     return x, fs
 
 
@@ -270,20 +309,8 @@ def _svd_load_prepare_signal(nsp_path: Path, metadata) -> tuple[np.ndarray, int,
     if x.ndim > 1:
         x = x.mean(axis=1)
 
-    # decode to float [-1,1] (necessary)
-    if np.issubdtype(x.dtype, np.integer):
-        x = x.astype(np.float32) / 32768.0
-    else:
-        x = x.astype(np.float32)
-        mmax = float(np.max(np.abs(x))) if x.size else 0.0
-        if mmax > 1.0:
-            x /= mmax
-
-    x, _ = librosa.effects.trim(
-        x, top_db=15, frame_length=256 * fs // 50000, hop_length=65 * fs // 50000
-    )
-
-    x = np.asarray(x, dtype=np.float32)
+    x = normalize_amplitude(x)
+    x = trim_silence(x, top_db=15, frame_length=256 * fs // 50000, hop_length=65 * fs // 50000)
     return x, fs, src, parts
 
 
@@ -360,11 +387,8 @@ def _voiced_load_prepare_signal(dat_path: Path) -> tuple[np.ndarray, int, dict, 
     fs = int(record.fs)
     x = np.asarray(x, dtype=np.float32)
 
-    x, _ = librosa.effects.trim(
-        x, top_db=15, frame_length=256 * fs // 50000, hop_length=65 * fs // 50000
-    )
-
-    x = np.asarray(x, dtype=np.float32)
+    x = normalize_amplitude(x)
+    x = trim_silence(x, top_db=15, frame_length=256 * fs // 50000, hop_length=65 * fs // 50000)
     return x, fs, info, base
 
 
@@ -461,7 +485,8 @@ def _avfad_load_prepare_signal(wav_path: Path, src_row: dict) -> tuple[np.ndarra
     if isinstance(x, np.ndarray) and x.ndim == 2:
         x = x[:, 0]
 
-    x, _ = librosa.effects.trim(x, top_db=15)
+    x = normalize_amplitude(x)
+    x = trim_silence(x, top_db=15)
 
     if AVFAD_CROP_TO_ONE_REP:
         intervals = librosa.effects.split(x, top_db=20)
