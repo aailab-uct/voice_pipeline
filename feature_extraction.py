@@ -14,7 +14,8 @@ import parselmouth
 from parselmouth.praat import call
 
 from sklearn.base import BaseEstimator, TransformerMixin
-
+import warnings
+warnings.filterwarnings("ignore", message="n_fft=.*is too large for input signal")
 
 # ------------------------------------------------------------
 # Small hashing helpers (optional, but kept)
@@ -122,6 +123,11 @@ class AudioPreprocessor(BaseEstimator, TransformerMixin):
         n_fft = 2048 * self.sr // 50000
         hop = 512 * self.sr // 50000
 
+        # padding pokud je signál kratší než n_fft
+        orig_len = len(x)
+        if len(x) < n_fft:
+            x = np.pad(x, (0, n_fft - len(x)), mode="reflect")
+
         # STFT
         f, t, stft = scipy_signal.stft(x, fs=self.sr, nperseg=n_fft, noverlap=n_fft - hop)
         magnitude = np.abs(stft)
@@ -137,13 +143,18 @@ class AudioPreprocessor(BaseEstimator, TransformerMixin):
         stft_clean = magnitude_clean * np.exp(1j * phase)
         _, x_clean = scipy_signal.istft(stft_clean, fs=self.sr, nperseg=n_fft, noverlap=n_fft - hop)
 
-        # zarovnání délky
-        x_clean = x_clean[:len(x)].astype(np.float32)
+        # zarovnání na původní délku
+        x_clean = x_clean[:orig_len].astype(np.float32)
         return x_clean
 
     def _wiener(self, x: np.ndarray) -> np.ndarray:
         n_fft = 2048 * self.sr // 50000
         hop = 512 * self.sr // 50000
+
+        # padding pokud je signál kratší než n_fft
+        orig_len = len(x)
+        if len(x) < n_fft:
+            x = np.pad(x, (0, n_fft - len(x)), mode="reflect")
 
         f, t, stft = scipy_signal.stft(x, fs=self.sr, nperseg=n_fft, noverlap=n_fft - hop)
         power = np.abs(stft) ** 2
@@ -157,7 +168,7 @@ class AudioPreprocessor(BaseEstimator, TransformerMixin):
         stft_clean = wiener_gain * stft
 
         _, x_clean = scipy_signal.istft(stft_clean, fs=self.sr, nperseg=n_fft, noverlap=n_fft - hop)
-        x_clean = x_clean[:len(x)].astype(np.float32)
+        x_clean = x_clean[:orig_len].astype(np.float32)
         return x_clean
 
     def _rir_normalization(self, x: np.ndarray) -> np.ndarray:
@@ -370,30 +381,40 @@ class TimeDomainFeaturesExtractor(FeatureExtractor):
 
     @staticmethod
     def _extract_full_features(x: np.ndarray, fmin: float, fmax: float, sr: int) -> np.ndarray:  # type: ignore[override]
-        sound = parselmouth.Sound(x, sampling_frequency=sr)
-        pitch = call(sound, "To Pitch", 0.0, fmin, fmax)
-        point_process = call(sound, "To PointProcess (periodic, cc)", fmin, fmax)
+        # Praat vyžaduje: fmin >= sr / n_samples
+        # Po TrimSilence může být signál krátký — dynamicky zvýšíme fmin pokud je potřeba
+        praat_min = sr / len(x) if len(x) > 0 else fmin
+        fmin = max(fmin, praat_min * 1.05)  # +5% bezpečnostní rezerva
 
-        mean_f0 = float(call(pitch, "Get mean", 0, 0, "Hertz"))
-        stdev_f0 = float(call(pitch, "Get standard deviation", 0, 0, "Hertz"))
+        try:
+            sound = parselmouth.Sound(x, sampling_frequency=sr)
+            pitch = call(sound, "To Pitch", 0.0, fmin, fmax)
+            point_process = call(sound, "To PointProcess (periodic, cc)", fmin, fmax)
 
-        pitch_data = pitch.selected_array["frequency"].astype(np.float64, copy=True)
-        pitch_data[pitch_data == 0] = np.nan
-        if np.all(np.isnan(pitch_data)) or np.nanmin(pitch_data) == 0:
-            diff_pitch = np.nan
-        else:
-            diff_pitch = float((np.nanmax(pitch_data) - np.nanmin(pitch_data)) / np.nanmin(pitch_data))
+            mean_f0 = float(call(pitch, "Get mean", 0, 0, "Hertz"))
+            stdev_f0 = float(call(pitch, "Get standard deviation", 0, 0, "Hertz"))
 
-        harmonicity = call(sound, "To Harmonicity (cc)", 0.01, fmin, 0.1, 1.0)
-        hnr = float(call(harmonicity, "Get mean", 0, 0))
+            pitch_data = pitch.selected_array["frequency"].astype(np.float64, copy=True)
+            pitch_data[pitch_data == 0] = np.nan
+            if np.all(np.isnan(pitch_data)) or np.nanmin(pitch_data) == 0:
+                diff_pitch = np.nan
+            else:
+                diff_pitch = float((np.nanmax(pitch_data) - np.nanmin(pitch_data)) / np.nanmin(pitch_data))
 
-        jitter = float(call(point_process, "Get jitter (local)", 0, 0, 0.0001, 0.02, 1.3))
-        shimmer = float(call([sound, point_process], "Get shimmer (local)", 0, 0, 0.0001, 0.02, 1.3, 1.6))
+            harmonicity = call(sound, "To Harmonicity (cc)", 0.01, fmin, 0.1, 1.0)
+            hnr = float(call(harmonicity, "Get mean", 0, 0))
 
-        entropy = TimeDomainFeaturesExtractor._entropy_from_signal(x)
-        skewness = float(sp.skew(np.asarray(x, dtype=np.float64), bias=False))
+            jitter = float(call(point_process, "Get jitter (local)", 0, 0, 0.0001, 0.02, 1.3))
+            shimmer = float(call([sound, point_process], "Get shimmer (local)", 0, 0, 0.0001, 0.02, 1.3, 1.6))
 
-        return np.array([mean_f0, stdev_f0, diff_pitch, hnr, jitter, shimmer, entropy, skewness], dtype=np.float32)
+            entropy = TimeDomainFeaturesExtractor._entropy_from_signal(x)
+            skewness = float(sp.skew(np.asarray(x, dtype=np.float64), bias=False))
+
+            return np.array([mean_f0, stdev_f0, diff_pitch, hnr, jitter, shimmer, entropy, skewness], dtype=np.float32)
+
+        except Exception:
+            # Krátká nebo problematická nahrávka — vrátíme NaN, ReplaceNaN step je nahradí 0
+            return np.full(8, np.nan, dtype=np.float32)
 
     def extract_feature(self, x: np.ndarray) -> np.ndarray:
         feats = self.cached_extraction(x, fmin=self.fmin, fmax=self.fmax, sr=self.sr)

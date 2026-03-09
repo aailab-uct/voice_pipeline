@@ -6,6 +6,7 @@ from datetime import datetime
 from importlib import import_module
 from pathlib import Path
 import numpy as np
+import librosa
 import argparse
 import socket
 import time
@@ -57,6 +58,70 @@ class ReplaceNaN(BaseEstimator, TransformerMixin):
     def transform(self, X):
         X = np.asarray(X, dtype=np.float32)
         return np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
+
+
+class TrimSilence(BaseEstimator, TransformerMixin):
+    """
+    Ořízne ticho na začátku a na konci surového signálu.
+    Aplikuje se po AudioPreprocessoru, před feature extraktory.
+
+    frame_length a hop_length se automaticky přepočítají podle sr
+    (stejný poměr jako při 50kHz: frame_length=256, hop_length=65).
+
+    Params:
+        enabled:      zapnutí/vypnutí
+        top_db:       práh v dB pod kterým je signál považován za ticho
+        sr:           vzorkovací kmitočet (nutný pro správné přepočty)
+        trim_start:   True = ořezat ticho na začátku
+        trim_end:     True = ořezat ticho na konci
+    """
+    def __init__(self, enabled: bool = True, top_db: float = 20.0,
+                 sr: int = 48000, trim_start: bool = True, trim_end: bool = True):
+        self.enabled = enabled
+        self.top_db = top_db
+        self.sr = sr
+        self.trim_start = trim_start
+        self.trim_end = trim_end
+
+    def fit(self, X, y=None):
+        return self
+
+    def transform(self, X, y=None):
+        if not self.enabled:
+            return X
+
+        frame_length = 256 * self.sr // 50000
+        hop_length = 65 * self.sr // 50000
+
+        X_out = []
+        for row in X:
+            signal = np.asarray(row[0], dtype=np.float32)
+
+            if self.trim_start and self.trim_end:
+                signal, _ = librosa.effects.trim(
+                    signal, top_db=self.top_db,
+                    frame_length=frame_length, hop_length=hop_length,
+                )
+            elif self.trim_end:
+                signal = signal[::-1]
+                signal, _ = librosa.effects.trim(
+                    signal, top_db=self.top_db,
+                    frame_length=frame_length, hop_length=hop_length,
+                )
+                signal = signal[::-1]
+            elif self.trim_start:
+                intervals = librosa.effects.split(
+                    signal, top_db=self.top_db,
+                    frame_length=frame_length, hop_length=hop_length,
+                )
+                if len(intervals):
+                    signal = signal[intervals[0][0]:]
+
+            new_row = row.copy()
+            new_row[0] = np.asarray(signal, dtype=np.float32)
+            X_out.append(new_row)
+
+        return np.array(X_out, dtype=object)
 
 
 class FeatureNormalizer(BaseEstimator, TransformerMixin):
@@ -232,6 +297,13 @@ def build_pipeline(random_state: int = 42) -> ImbPipeline:
                 use_wiener=False,
                 use_spectral_subtraction=True,
                 sr=48000,
+            )),
+            ("trim_silence", TrimSilence(
+                enabled=True,
+                top_db=20.0,
+                sr=48000,
+                trim_start=True,
+                trim_end=True,
             )),
             ("mfcc", MFCCExtractor(enabled=False, sr=48000, n_mfcc=20)),
             ("timedomain", TimeDomainFeaturesExtractor(

@@ -21,6 +21,9 @@ config = {
             "audio_prep__use_wiener": [True, False],
             "audio_prep__use_spectral_subtraction": [True, False],
 
+            # --- Silenci trim ---
+            "trim_silence__top_db": [15.0, 20.0],
+
             # --- Features preprocessing ---
             # "feat_norm__enabled": [True, False],
             "feat_norm__use_rms": [True, False],
@@ -51,6 +54,7 @@ config = {
     "include_sex": True,
     "allowed_vowels": {"a"},
     "allowed_intonations": {"n"},
+    "trim_silence__trim_start": True,
 
     # musí být víc než 1 dataset
     "selected_datasets": {"SVD", "AVFAD", "VOICED", "PVQD"},
