@@ -1,94 +1,116 @@
-"""Sample configuration file"""
+"""Experiment 3: No SMOTE, class_weight='balanced', selection by balanced accuracy (UAR)"""
 
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.feature_selection import SelectKBest, mutual_info_classif, SelectFromModel, RFECV
 from sklearn.model_selection import StratifiedGroupKFold
-from sklearn.neighbors import KNeighborsClassifier
+from oversampling import SMOTESampler, VAESampler
+
 from custom_classifiers import KANClassifier
 
-# experiment with seed for SMOTE
-resampler_seeds = sorted(set(range(0, 105, 1)) | set(range(100, 1100, 20)))
+sampling_rate = 48000
 
 config = {
-    "experiment_name": "svd_basic_seed",
-    "experiment_description": "basic run with not only artificial samples for comparison for seed experiments",
-    # ========== GRID SEARCH ==========
-    # list of dicts for GridSearchCV's param_grid - each dict is a separate branch
-    "param_grid": [
-        {
-            # --- classifier branch: KNN ---
-            "clf": [KNeighborsClassifier()],
-            "clf__n_neighbors": [3],
-            # --- augmentation/grid params shared ---
-            "raw_aug__enabled": [False],  # True, False
-            "feat_aug__enabled": [True],  # True, False
-            "feat_aug__std_factor": [0.01],  # 0.01, 0.02, 0.05
-            "resampler__random_state": [40],
-            # "resampler__random_state": [0, 2, 6, 10, 20, 30, 40, 50, 60, 100, 500, 1000]
-            # "resampler__random_state": resampler_seeds,
-        },
-        # {
-        #     # --- classifier branch: KAN ---
-        #     "clf": [KANClassifier(seed=42, device="cpu")],
-        #     "clf__hidden": [8],
-        #     "clf__grid": [5],
-        #     "clf__k": [3],
-        #     "clf__steps": [100],
-        #     "clf__lr": [1e-3],
-        #     "clf__seed": [40],
-        #     # --- augmentation/grid params shared ---
-        #     "raw_aug__enabled": [False],  # True, False
-        #     "feat_aug__enabled": [True],  # True, False
-        #     "feat_aug__std_factor": [0.02],  # 0.01, 0.02, 0.05
-        #     # "resampler__random_state": [0, 2, 6, 10, 20, 30, 40, 50, 60, 100, 500, 1000, 10000]
-        #     "resampler__random_state": resampler_seeds,
-        # },
-    ],
-    # ========== FIXED PIPELINE SETTINGS ==========
-    # IMPORTANT: single values only (no lists). Lists belong in param_grid.
-    "pipeline": {
-        # raw augmenter defaults (enabled is controlled by param_grid)
-        "raw_aug__noise_std": 0.005,
-        "raw_aug__random_state": 42,
-        # MFCC extractor
-        "mfcc__sr": 50000,
-        "mfcc__n_mfcc": 20,
-        # other feature extractors
-        "timedomain__enabled": True,
-        "timedomain__sr": 50000,
-        "zcr__enabled": True,
-        "zcr__sr": 50000,
-        "spectral__enabled": True,
-        "spectral__sr": 50000,
-        # feature augmenter defaults (enabled + std_factor are controlled by param_grid)
-        "feat_aug__random_state": 40,
-        # resampler
-        "resampler__enabled": True,
-        # "resampler__random_state": 42,
-        "resampler__artificial_only": False,
-        "resampler__sampling_strategy": {0: 1000, 1: 1000},  # set number of samples in each class, "auto"
-        # selector setting
-        "selector__enabled": True,
-        "selector__k": 20,
-    },
-    # ========== CV / scoring ==========
-    "cv": StratifiedGroupKFold(n_splits=5),
-    "scoring_mode": "multimetric",   # "multimetric" / "accuracy_only" / "uar_only"
-    "refit_metric": False,           # False = jen logování (aktuální stav)
-    # ========== DATASET BUILDING ==========
-    "excluded_pathologies": {
-        "Sängerstimme",
-        "Gesangsstimme",
-        "Sigmatismus",
-        "Balbuties",
-        "Dysodie",
-        "Poltersyndrom",
-        "Non-fluency-Syndrom",
-    },
-    "include_age": False,
-    "include_sex": True,
+    # ------------------------------------------------------------------
+    # Experiment metadata
+    # ------------------------------------------------------------------
+    "experiment_name": "afthermath_only_svd",
+    "experiment_description": "first try afther repair of nsp to wav conversion error",
+
+    # ------------------------------------------------------------------
+    # Dataset
+    # ------------------------------------------------------------------
+    "selected_datasets": {"SVD"},       # "SVD" | "AVFAD"
+    "selected_fs": sampling_rate,
     "allowed_vowels": {"a"},
     "allowed_intonations": {"n"},
-    "selected_datasets": {"SVD"},  # "VOICED"
-    "selected_fs": 50000,
+    "include_age": True,
+    "include_sex": True,
+    "excluded_pathologies": {
+        "Stuttering",
+        "Singing voice",
+        "Dysodia",
+        "Sigmatism",
+        "Non-fluency-Syndrom",
+        "Mutatio",
+    },
+
+    # ------------------------------------------------------------------
+    # Cross-validation & scoring
+    # ------------------------------------------------------------------
+    "cv": StratifiedGroupKFold(n_splits=10),
+    "scoring_mode": "multimetric",
+    "refit_metric": "uar",
+
+    # ------------------------------------------------------------------
+    # Pipeline
+    # ------------------------------------------------------------------
+    "pipeline": {
+        # Signal augmentation (before feature extraction)
+        "raw_aug__enabled": False,
+        "raw_aug__noise_std": 0.005,
+        "raw_aug__random_state": 42,
+
+        # Feature extractors
+        "mfcc__enabled": False,
+        "mfcc__sr": sampling_rate,
+        "mfcc__n_mfcc": 20,
+
+        "timedomain__enabled": True,
+        "timedomain__sr": sampling_rate,
+        "timedomain__use_zcr": False,
+        "timedomain__use_entropy": False,
+        "timedomain__use_skewness": False,
+        "timedomain__use_diff_pitch": False,
+
+        "zcr__enabled": False,
+        "zcr__sr": sampling_rate,
+
+        "spectral__enabled": True,
+        "spectral__sr": sampling_rate,
+
+        "opensmile__enabled": False,
+        "opensmile__sr": sampling_rate,
+        "opensmile__feature_set": "GeMAPS",       # "GeMAPS" | "ComParE_2016"
+        "opensmile__feature_level": "functionals",
+
+        # Feature augmentation (after extraction, before resampling)
+        "feat_aug__enabled": False,
+        "feat_aug__std_factor": 0.01,
+        "feat_aug__random_state": 42,
+
+        # Feature selection
+        "selector__enabled": False,
+        "selector__instance": SelectKBest(score_func=mutual_info_classif, k=20),
+        # "selector__instance": SelectFromModel(
+        #     estimator=RandomForestClassifier(n_estimators=300, random_state=42, n_jobs=-1, class_weight="balanced"),
+        #     threshold="median",
+        # ),
+        # "selector__instance": RFECV(
+        #     estimator=RandomForestClassifier(n_estimators=300, random_state=42, n_jobs=-1, class_weight="balanced"),
+        #     step=0.1, cv=5, scoring="balanced_accuracy", n_jobs=-1,
+        # ),
+
+        # Resampling
+        # "resampler": SMOTESampler(enabled=True, random_state=42, artificial_only=False, sampling_strategy="auto"),
+        "resampler": VAESampler(enabled=True, random_state=42, artificial_only=False, sampling_strategy="auto"),
+
+        # Classifier
+        "clf": RandomForestClassifier(random_state=42, n_jobs=-1),
+    },
+
+    # ------------------------------------------------------------------
+    # Grid search
+    # ------------------------------------------------------------------
+    "param_grid": [
+        {
+            "clf__n_estimators": [200, 400, 600],
+            "clf__max_depth": [None, 5, 10, 20],
+            "clf__min_samples_split": [2, 5, 10],
+            "clf__min_samples_leaf": [1, 2, 4],
+            "clf__max_features": ["sqrt", "log2", None],
+            "clf__class_weight": [None, "balanced"],
+        },
+    ],
 }
 
 if __name__ == "__main__":

@@ -18,7 +18,6 @@ from tqdm import tqdm
 from sklearn.model_selection import ParameterGrid
 
 
-from sklearn.dummy import DummyClassifier
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.model_selection import StratifiedGroupKFold, GridSearchCV
@@ -87,74 +86,39 @@ def build_pipeline(pipeline_params: dict | None = None, random_state: int = 42) 
 
     pipe = ImbPipeline(
         steps=[
-            ("raw_aug", RawAugmenter(enabled=False, noise_std=0.005, random_state=random_state)),
-            ("mfcc", MFCCExtractor(enabled=True, sr=50000, n_mfcc=20)),
+            ("raw_aug",    RawAugmenter(enabled=False, noise_std=0.005, random_state=random_state)),
+            ("mfcc",       MFCCExtractor(enabled=True, sr=50000, n_mfcc=20)),
             ("timedomain", TimeDomainFeaturesExtractor(sr=50000, enabled=True, sex_col=1,
                                                        f0_range_m=(75.0, 300.0),
-                                                       f0_range_f=(100.0, 600.0),)),
-            ("zcr", ZCRExtractor(sr=50000, enabled=True)),
-            ("spectral", SpectralFeaturesExtractor(sr=50000, enabled=True)),
-            ("opensmile", OpenSmileExtractor(
-                enabled=False,
-                sr=50000,
-                feature_set="GeMAPS", # GeMAPS, ComParE_2016
-                feature_level="functionals",
-            )),
-            ("drop_sig", DropSignalColumn()),
+                                                       f0_range_f=(100.0, 600.0))),
+            ("zcr",        ZCRExtractor(sr=50000, enabled=True)),
+            ("spectral",   SpectralFeaturesExtractor(sr=50000, enabled=True)),
+            ("opensmile",  OpenSmileExtractor(enabled=False, sr=50000,
+                                              feature_set="GeMAPS",
+                                              feature_level="functionals")),
+            ("drop_sig",   DropSignalColumn()),
             ("replace_nan", ReplaceNaN()),
-            ("scaler", StandardScaler()),
-            ("selector", SelectKBest(score_func=mutual_info_classif, k=20)),
-            # ("selector", RFECV(
-            #     estimator=RandomForestClassifier(
-            #         n_estimators=300,
-            #         random_state=42,
-            #         n_jobs=-1,
-            #         class_weight="balanced",
-            #     ),
-            #     step=0.1,
-            #     cv=5,
-            #     scoring="balanced_accuracy",
-            #     n_jobs=-1,
-            # )),
-
-            # ("selector", SelectFromModel(
-            #     estimator=RandomForestClassifier(
-            #         n_estimators=300,
-            #         random_state=42,
-            #         n_jobs=-1,
-            #         class_weight="balanced",
-            #     ),
-            #     threshold="median",
-            # )),
-            ("feat_aug", FeatureAugmenter(enabled=True, std_factor=0.02, random_state=random_state)),
-            # artificial only means that real samples are discarded
-            # sampling strategi set how much there will be samples in the end, {0:1000, 1:1000} for each class
-            (
-                "resampler",
-                #SMOTESampler(enabled=True, random_state=random_state, artificial_only=True, sampling_strategy="auto"),
-                VAESampler(enabled=True, random_state=random_state, artificial_only=True, sampling_strategy="auto"),
-            ),
-            # Placeholder classifier.
-            # The real classifier (e.g. KNN or KAN) is injected later by GridSearchCV
-            # via the "clf" parameter in param_grid.
-            ("clf", DummyClassifier(strategy="most_frequent")),
+            ("scaler",     StandardScaler()),
+            ("selector",   pipeline_params.get("selector__instance", SelectKBest(score_func=mutual_info_classif, k=20))),
+            ("feat_aug",   FeatureAugmenter(enabled=True, std_factor=0.02, random_state=random_state)),
+            ("resampler",  SMOTESampler(enabled=True, random_state=random_state, artificial_only=True, sampling_strategy="auto")),
+            ("clf",        RandomForestClassifier(random_state=random_state, n_jobs=-1)),
         ]
     )
     # take settings from config if config is available
     # if config is not available or is empty, tak settings of pipe from above
     if pipeline_params:
-        # --- handle selector enable/disable safely ---
         params = dict(pipeline_params)
 
         selector_enabled = params.pop("selector__enabled", True)
+        params.pop("selector__instance", None)  # already applied when building the pipe
 
         if not selector_enabled:
-            # Switch selector to passthrough
             pipe.set_params(selector="passthrough")
-            # Remove any selector__* params (e.g., selector__k), otherwise sklearn will crash
+            # strip selector__ params so sklearn doesn't crash on passthrough
             for k in list(params.keys()):
                 if k.startswith("selector__"):
-                    params.pop(k, None)
+                    params.pop(k)
 
         pipe.set_params(**params)
 

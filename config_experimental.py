@@ -1,39 +1,59 @@
 """Experiment 3: No SMOTE, class_weight='balanced', selection by balanced accuracy (UAR)"""
 
-from sklearn.model_selection import StratifiedGroupKFold
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.feature_selection import SelectKBest, mutual_info_classif, SelectFromModel, RFECV
+from sklearn.model_selection import StratifiedGroupKFold
+from oversampling import SMOTESampler, VAESampler
 
 from custom_classifiers import KANClassifier
 
 sampling_rate = 48000
-# resampler_seeds = sorted(set(range(0, 105, 1)) | set(range(100, 1100, 20)))
 
 config = {
+    # ------------------------------------------------------------------
+    # Experiment metadata
+    # ------------------------------------------------------------------
     "experiment_name": "afthermath_only_svd",
     "experiment_description": "first try afther repair of nsp to wav conversion error",
 
-    "param_grid": [
-        {
-            "clf": [RandomForestClassifier(random_state=42, n_jobs=-1)],
-            "clf__n_estimators": [200, 400, 600],
-            "clf__max_depth": [None, 5, 10, 20],
-            "clf__min_samples_split": [2, 5, 10],
-            "clf__min_samples_leaf": [1, 2, 4],
-            "clf__max_features": ["sqrt", "log2", None],
-            "clf__class_weight": [None, "balanced"]
-        },
-    ],
+    # ------------------------------------------------------------------
+    # Dataset
+    # ------------------------------------------------------------------
+    "selected_datasets": {"SVD"},       # "SVD" | "AVFAD" "VOICED" "PVQD"
+    "selected_fs": sampling_rate,
+    "allowed_vowels": {"a"},
+    "allowed_intonations": {"n"},
+    "include_age": True,
+    "include_sex": True,
+    "excluded_pathologies": {
+        "Stuttering",
+        "Singing voice",
+        "Dysodia",
+        "Sigmatism",
+        "Non-fluency-Syndrom",
+        "Mutatio",
+    },
 
+    # ------------------------------------------------------------------
+    # Cross-validation & scoring
+    # ------------------------------------------------------------------
+    "cv": StratifiedGroupKFold(n_splits=10),
+    "scoring_mode": "multimetric",
+    "refit_metric": "uar",
+
+    # ------------------------------------------------------------------
+    # Pipeline
+    # ------------------------------------------------------------------
     "pipeline": {
+        # Signal augmentation (before feature extraction)
+        "raw_aug__enabled": False,
         "raw_aug__noise_std": 0.005,
         "raw_aug__random_state": 42,
-        "raw_aug__enabled": False,
-        "feat_aug__enabled": False,
-        "feat_aug__std_factor": 0.01,
 
+        # Feature extractors
+        "mfcc__enabled": False,
         "mfcc__sr": sampling_rate,
         "mfcc__n_mfcc": 20,
-        "mfcc__enabled": False,
 
         "timedomain__enabled": True,
         "timedomain__sr": sampling_rate,
@@ -48,36 +68,49 @@ config = {
         "spectral__enabled": True,
         "spectral__sr": sampling_rate,
 
+        "opensmile__enabled": False,
+        "opensmile__sr": sampling_rate,
+        "opensmile__feature_set": "GeMAPS",       # "GeMAPS" | "ComParE_2016"
+        "opensmile__feature_level": "functionals",
+
+        # Feature augmentation (after extraction, before resampling)
+        "feat_aug__enabled": False,
+        "feat_aug__std_factor": 0.01,
         "feat_aug__random_state": 42,
 
-        # SMOTE OFF
-        "resampler__enabled": True,
-        "resampler__artificial_only": False,
-        "resampler__sampling_strategy": "auto",
-        "resampler__random_state": 42,
-
+        # Feature selection
         "selector__enabled": False,
-        "selector__k": 20,
+        "selector__instance": SelectKBest(score_func=mutual_info_classif, k=20),
+        # "selector__instance": SelectFromModel(
+        #     estimator=RandomForestClassifier(n_estimators=300, random_state=42, n_jobs=-1, class_weight="balanced"),
+        #     threshold="median",
+        # ),
+        # "selector__instance": RFECV(
+        #     estimator=RandomForestClassifier(n_estimators=300, random_state=42, n_jobs=-1, class_weight="balanced"),
+        #     step=0.1, cv=5, scoring="balanced_accuracy", n_jobs=-1,
+        # ),
+
+        # Resampling
+        "resampler": SMOTESampler(enabled=True, random_state=42, artificial_only=False, sampling_strategy="auto"),
+        # "resampler": VAESampler(enabled=True, random_state=42, artificial_only=False, sampling_strategy="auto"),
+
+        # Classifier
+        "clf": RandomForestClassifier(random_state=42, n_jobs=-1),
     },
 
-    "cv": StratifiedGroupKFold(n_splits=10),
-    "scoring_mode": "multimetric",
-    "refit_metric": "uar",  # vybírá podle balanced accuracy
-
-    "excluded_pathologies": {
-        "Stuttering",
-        "Singing voice",
-        "Dysodia",
-        "Sigmatism",
-        "Non-fluency-Syndrom",
-        "Mutatio"
-    },
-    "include_age": True,
-    "include_sex": True,
-    "allowed_vowels": {"a"},
-    "allowed_intonations": {"n"},
-    "selected_datasets": {"SVD"},   # "SVD" "AVFAD"
-    "selected_fs": sampling_rate,
+    # ------------------------------------------------------------------
+    # Grid search
+    # ------------------------------------------------------------------
+    "param_grid": [
+        {
+            "clf__n_estimators": [200, 400, 600],
+            "clf__max_depth": [None, 5, 10, 20],
+            "clf__min_samples_split": [2, 5, 10],
+            "clf__min_samples_leaf": [1, 2, 4],
+            "clf__max_features": ["sqrt", "log2", None],
+            "clf__class_weight": [None, "balanced"],
+        },
+    ],
 }
 
 if __name__ == "__main__":
