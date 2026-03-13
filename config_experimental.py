@@ -13,8 +13,8 @@ config = {
     # ------------------------------------------------------------------
     # Experiment metadata
     # ------------------------------------------------------------------
-    "experiment_name": "afthermath_only_svd",
-    "experiment_description": "first try afther repair of nsp to wav conversion error",
+    "experiment_name": "visualize test 2",
+    "experiment_description": "--- test---",
 
     # ------------------------------------------------------------------
     # Dataset
@@ -40,6 +40,8 @@ config = {
     "cv": StratifiedGroupKFold(n_splits=10),
     "scoring_mode": "multimetric",
     "refit_metric": "uar",
+    "plot_uar_per_pathology": True,
+    "plot_feature_histograms": True,
 
     # ------------------------------------------------------------------
     # Pipeline
@@ -103,11 +105,11 @@ config = {
     # ------------------------------------------------------------------
     "param_grid": [
         {
-            "clf__n_estimators": [200, 400, 600],
-            "clf__max_depth": [None, 5, 10, 20],
-            "clf__min_samples_split": [2, 5, 10],
-            "clf__min_samples_leaf": [1, 2, 4],
-            "clf__max_features": ["sqrt", "log2", None],
+            "clf__n_estimators": [300],
+            "clf__max_depth": [5],
+            "clf__min_samples_split": [2],
+            "clf__min_samples_leaf": [1],
+            "clf__max_features": ["sqrt", None],
             "clf__class_weight": [None, "balanced"],
         },
     ],

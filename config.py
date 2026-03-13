@@ -40,6 +40,8 @@ config = {
     "cv": StratifiedGroupKFold(n_splits=10),
     "scoring_mode": "multimetric",
     "refit_metric": "uar",
+    "plot_uar_per_pathology": True,
+    "plot_feature_histograms": False,
 
     # ------------------------------------------------------------------
     # Pipeline
@@ -91,8 +93,8 @@ config = {
         # ),
 
         # Resampling
-        # "resampler": SMOTESampler(enabled=True, random_state=42, artificial_only=False, sampling_strategy="auto"),
-        "resampler": VAESampler(enabled=True, random_state=42, artificial_only=False, sampling_strategy="auto"),
+        "resampler": SMOTESampler(enabled=True, random_state=42, artificial_only=False, sampling_strategy="auto"),
+        # "resampler": VAESampler(enabled=True, random_state=42, artificial_only=False, sampling_strategy="auto"),
 
         # Classifier
         "clf": RandomForestClassifier(random_state=42, n_jobs=-1),
