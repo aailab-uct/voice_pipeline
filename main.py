@@ -243,6 +243,39 @@ def per_pathology_uar(best_estimator, X, y, groups, pathologies, cv, healthy_nam
     return df.sort_values("UAR", ascending=False)
 
 
+def repeated_cv_evaluation(
+    best_estimator,
+    X: np.ndarray,
+    y: np.ndarray,
+    groups: np.ndarray,
+    n_splits: int = 10,
+    n_repeats: int = 1000,
+) -> pd.DataFrame:
+    """
+    Repeated stratified group k-fold evaluation of a fitted estimator.
+
+    Each repeat uses a different random_state for the CV split, producing
+    n_repeats × n_splits rows in the output.
+
+    Returns
+    -------
+    pd.DataFrame with columns: repeat, fold, UAR, accuracy
+    """
+    rows = []
+    for repeat in tqdm(range(n_repeats), desc="Repeated CV"):
+        cv = StratifiedGroupKFold(n_splits=n_splits, shuffle=True, random_state=repeat)
+        for fold, (tr, te) in enumerate(cv.split(X, y, groups)):
+            est = clone(best_estimator)
+            est.fit(X[tr], y[tr])
+            yp = est.predict(X[te])
+
+            uar = balanced_accuracy_score(y[te], yp)
+            acc = accuracy_score(y[te], yp)
+            rows.append((repeat, fold, uar, acc))
+
+    return pd.DataFrame(rows, columns=["repeat", "fold", "UAR", "accuracy"])
+
+
 from visualize import run_visualizations
 
 @contextmanager
@@ -378,6 +411,16 @@ def main(config: dict[str, Any] | None = None):
     )
 
     run_visualizations(config, grid_search.best_estimator_, X, y, groups, pathologies, datasets, cv, run_dir)
+
+    if config.get("n_repeats", 0) > 0:
+        n_splits = config.get("cv").get_n_splits() if hasattr(config.get("cv"), "get_n_splits") else 10
+        df_repeated = repeated_cv_evaluation(
+            grid_search.best_estimator_, X, y, groups,
+            n_splits=n_splits,
+            n_repeats=config.get("n_repeats"),
+        )
+        df_repeated.to_csv(run_dir / "repeated_cv.csv", index=False)
+        print(f"Repeated CV UAR: {df_repeated['UAR'].mean():.4f} ± {df_repeated['UAR'].std():.4f}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run voice pathology classification pipeline.")

@@ -16,39 +16,36 @@ def plot_uar_by_pathology(dfp, savepath=None, title="UAR per pathology"):
     d = dfp.sort_values("UAR", ascending=True).reset_index(drop=True)
     n = len(d)
 
-    fig, ax = plt.subplots(figsize=(9, max(4, n * 0.45)))
+    fig, ax = plt.subplots(figsize=(7, max(2.5, n * 0.28)))
     fig.patch.set_facecolor("white")
     ax.set_facecolor("white")
 
     colors = [_uar_color(v) for v in d["UAR"]]
-    bars = ax.barh(np.arange(n), d["UAR"].values, color=colors, height=0.6)
+    ax.barh(np.arange(n), d["UAR"].values, color=colors, height=0.65)
 
-    # reference line at 0.5 (chance level)
-    ax.axvline(0.5, color="#B4B2A9", linewidth=1, linestyle="--", zorder=0)
+    ax.axvline(0.5, color="#B4B2A9", linewidth=0.8, linestyle="--", zorder=0)
 
-    # value + n labels to the right of each bar
     for i, (uar, n_pat) in enumerate(zip(d["UAR"], d["n_pathology"])):
         ax.text(
-            min(0.97, uar + 0.015), i,
+            min(0.97, uar + 0.012), i,
             f"{uar:.2f}  n={int(n_pat)}",
             va="center", ha="left",
-            fontsize=10, color="#5F5E5A",
+            fontsize=7.5, color="#5F5E5A",
         )
 
     ax.set_yticks(np.arange(n))
-    ax.set_yticklabels(d["pathology"].values, fontsize=11, color="#2C2C2A")
-    ax.set_xlim(0, 1.15)
-    ax.set_xlabel("UAR", fontsize=11, color="#5F5E5A")
-    ax.set_title(title, fontsize=13, fontweight="normal", color="#2C2C2A", pad=12)
+    ax.set_yticklabels(d["pathology"].values, fontsize=8, color="#2C2C2A")
+    ax.set_xlim(0, 1.18)
+    ax.set_xlabel("UAR", fontsize=9, color="#5F5E5A")
+    ax.set_title(title, fontsize=10, fontweight="normal", color="#2C2C2A", pad=8)
 
     ax.spines[["top", "right", "left"]].set_visible(False)
     ax.spines["bottom"].set_color("#D3D1C7")
-    ax.tick_params(axis="x", colors="#888780", labelsize=10)
-    ax.tick_params(axis="y", length=0)
+    ax.tick_params(axis="x", colors="#888780", labelsize=8)
+    ax.tick_params(axis="y", length=0, pad=3)
     ax.xaxis.grid(True, color="#F1EFE8", zorder=0)
     ax.set_axisbelow(True)
 
-    # color legend
     legend_items = [
         ("#1D9E75", "≥ 0.75"),
         ("#378ADD", "≥ 0.60"),
@@ -57,11 +54,12 @@ def plot_uar_by_pathology(dfp, savepath=None, title="UAR per pathology"):
     ]
     handles = [plt.Rectangle((0, 0), 1, 1, color=c) for c, _ in legend_items]
     labels  = [l for _, l in legend_items]
-    ax.legend(handles, labels, title="UAR", title_fontsize=9,
-              fontsize=9, loc="lower right", framealpha=0.9,
-              edgecolor="#D3D1C7")
+    ax.legend(handles, labels, title="UAR", title_fontsize=7,
+              fontsize=7, loc="lower right", framealpha=0.9,
+              edgecolor="#D3D1C7", handlelength=1, handleheight=0.8,
+              borderpad=0.5, labelspacing=0.3)
 
-    fig.tight_layout()
+    fig.tight_layout(pad=0.5)
     if savepath:
         fig.savefig(savepath, dpi=200, bbox_inches="tight")
     plt.close(fig)

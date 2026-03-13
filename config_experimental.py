@@ -13,8 +13,8 @@ config = {
     # ------------------------------------------------------------------
     # Experiment metadata
     # ------------------------------------------------------------------
-    "experiment_name": "visualize test 2",
-    "experiment_description": "--- test---",
+    "experiment_name": "SMOTE_experiment_without_smote",
+    "experiment_description": "article experiment",
 
     # ------------------------------------------------------------------
     # Dataset
@@ -26,12 +26,18 @@ config = {
     "include_age": True,
     "include_sex": True,
     "excluded_pathologies": {
+        "Sängerstimme",
+        "Poltersyndrom",
         "Stuttering",
         "Singing voice",
+        "Singing voice ; Vocal fold nodules",
+        "Dysphonia ; Mutatio",
         "Dysodia",
         "Sigmatism",
         "Non-fluency-Syndrom",
         "Mutatio",
+        "Stuttering ; Laryngitis",
+        "Dysodia ; Hyperfunctional dysphonia"
     },
 
     # ------------------------------------------------------------------
@@ -40,6 +46,7 @@ config = {
     "cv": StratifiedGroupKFold(n_splits=10),
     "scoring_mode": "multimetric",
     "refit_metric": "uar",
+    "n_repeats": 1000,          # 0 = vypnuto, jinak počet opakování repeated CV
     "plot_uar_per_pathology": True,
     "plot_feature_histograms": True,
 
@@ -93,7 +100,7 @@ config = {
         # ),
 
         # Resampling
-        "resampler": SMOTESampler(enabled=True, random_state=42, artificial_only=False, sampling_strategy="auto"),
+        "resampler": SMOTESampler(enabled=False, random_state=42, artificial_only=False, sampling_strategy="auto"),
         # "resampler": VAESampler(enabled=True, random_state=42, artificial_only=False, sampling_strategy="auto"),
 
         # Classifier
@@ -105,11 +112,11 @@ config = {
     # ------------------------------------------------------------------
     "param_grid": [
         {
-            "clf__n_estimators": [300],
-            "clf__max_depth": [5],
-            "clf__min_samples_split": [2],
-            "clf__min_samples_leaf": [1],
-            "clf__max_features": ["sqrt", None],
+            "clf__n_estimators": [200, 300, 400],
+            "clf__max_depth": [None, 10, 20],
+            "clf__min_samples_split": [2, 5],
+            "clf__min_samples_leaf": [1, 3, 5],
+            "clf__max_features": ["sqrt", 0.3],
             "clf__class_weight": [None, "balanced"],
         },
     ],
