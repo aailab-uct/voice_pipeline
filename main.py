@@ -11,7 +11,6 @@ import time
 
 from sklearn.base import clone
 from sklearn.metrics import recall_score
-import matplotlib.pyplot as plt
 import sys
 from contextlib import contextmanager
 from tqdm import tqdm
@@ -101,21 +100,20 @@ def build_pipeline(pipeline_params: dict | None = None, random_state: int = 42) 
             ("scaler",     StandardScaler()),
             ("selector",   pipeline_params.get("selector__instance", SelectKBest(score_func=mutual_info_classif, k=20))),
             ("feat_aug",   FeatureAugmenter(enabled=True, std_factor=0.02, random_state=random_state)),
-            ("resampler",  SMOTESampler(enabled=True, random_state=random_state, artificial_only=True, sampling_strategy="auto")),
+            ("resampler",  SMOTESampler(enabled=True, random_state=random_state, artificial_only=False, sampling_strategy="auto")),
             ("clf",        RandomForestClassifier(random_state=random_state, n_jobs=-1)),
         ]
     )
-    # take settings from config if config is available
-    # if config is not available or is empty, tak settings of pipe from above
+
     if pipeline_params:
         params = dict(pipeline_params)
 
+        # strip keys handled at pipeline construction time
         selector_enabled = params.pop("selector__enabled", True)
-        params.pop("selector__instance", None)  # already applied when building the pipe
+        params.pop("selector__instance", None)
 
         if not selector_enabled:
             pipe.set_params(selector="passthrough")
-            # strip selector__ params so sklearn doesn't crash on passthrough
             for k in list(params.keys()):
                 if k.startswith("selector__"):
                     params.pop(k)
@@ -244,34 +242,8 @@ def per_pathology_uar(best_estimator, X, y, groups, pathologies, cv, healthy_nam
 
     return df.sort_values("UAR", ascending=False)
 
-def plot_uar_by_pathology(dfp, savepath=None):
-    d = dfp.sort_values("UAR", ascending=True).reset_index(drop=True)
-    y = np.arange(len(d))
 
-    plt.figure(figsize=(8, max(4, 0.3 * len(d))))
-    plt.barh(y, d["UAR"].values)
-
-    plt.yticks(y, d["pathology"].values, fontsize=7)
-
-    # přidáme počet patologických vzorků
-    for i, (uar, n_pat) in enumerate(zip(d["UAR"], d["n_pathology"])):
-        plt.text(
-            min(0.99, uar + 0.01),
-            i,
-            f"{uar:.2f} (n={int(n_pat)})",
-            va="center",
-            fontsize=7
-        )
-
-    plt.xlim(0, 1)
-    plt.xlabel("UAR")
-    plt.title("UAR per pathology")
-    plt.tight_layout()
-
-    if savepath:
-        plt.savefig(savepath, dpi=200)
-
-    # plt.show()
+from visualize import run_visualizations
 
 @contextmanager
 def tqdm_from_verbose(total, desc="GridSearch", unit="fit"):
@@ -299,6 +271,7 @@ def tqdm_from_verbose(total, desc="GridSearch", unit="fit"):
         sys.stdout = old_stdout
         pbar.close()
 
+
 # ==========
 # 3) Main entry point
 # ==========
@@ -318,7 +291,7 @@ def main(config: dict[str, Any] | None = None):
                 }
             ]
         }
-    X, y, groups, pathologies = build_dataset(
+    X, y, groups, pathologies, datasets = build_dataset(
         excluded_pathologies=config.get(
             "excluded_pathologies",
             {
@@ -404,22 +377,7 @@ def main(config: dict[str, Any] | None = None):
         config=config,
     )
 
-    best = grid_search.best_estimator_
-    dfp = per_pathology_uar(best, X, y, groups, pathologies, cv)
-    # dfp.to_csv("per_pathology_results.csv", index=False)
-
-    # uložit všechny
-    dfp.to_csv(run_dir / "per_pathology_UAR_all.csv", index=False)
-    plot_uar_by_pathology(dfp, run_dir / "uar_all.png")
-
-    # jen slabší než většina
-    threshold = dfp["UAR"].median()
-    dfp_weak = dfp[dfp["UAR"] < threshold]
-
-    dfp_weak.to_csv(run_dir / "per_pathology_UAR_weak.csv", index=False)
-    plot_uar_by_pathology(dfp_weak, run_dir / "uar_weak.png")
-
-    # plot_uar_by_pathology(dfp, "uar_per_pathology.png")
+    run_visualizations(config, grid_search.best_estimator_, X, y, groups, pathologies, datasets, cv, run_dir)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run voice pathology classification pipeline.")
