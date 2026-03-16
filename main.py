@@ -30,6 +30,7 @@ from sklearn.metrics import (
 
 from imblearn.pipeline import Pipeline as ImbPipeline
 import pandas as pd
+from visualize import run_visualizations
 
 from feature_extraction import (
     MFCCExtractor,
@@ -275,8 +276,6 @@ def repeated_cv_evaluation(
 
     return pd.DataFrame(rows, columns=["repeat", "fold", "UAR", "accuracy"])
 
-
-from visualize import run_visualizations
 
 @contextmanager
 def tqdm_from_verbose(total, desc="GridSearch", unit="fit"):
