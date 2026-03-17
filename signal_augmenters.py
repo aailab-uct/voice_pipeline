@@ -1,4 +1,4 @@
-"""Signal-level augmenters."""
+"""Signal (waveform)-level augmenters."""
 
 import numpy as np
 from sklearn.base import BaseEstimator, TransformerMixin
@@ -21,6 +21,14 @@ class RawAugmenter(BaseEstimator, TransformerMixin):
         gain_max=1.2,
         random_state=None,
     ):
+        """Initialize the augmenter.
+
+        :param enabled: Whether to apply augmentation. If False, the transform will return the input unchanged.
+        :param noise_std: Standard deviation of the additive Gaussian noise.
+        :param gain_min: Minimum gain factor for random gain.
+        :param gain_max: Maximum gain factor for random gain.
+        :param random_state: Random seed for reproducibility.
+        """
         self.enabled = enabled
         self.noise_std = noise_std
         self.gain_min = gain_min
@@ -28,11 +36,16 @@ class RawAugmenter(BaseEstimator, TransformerMixin):
         self.random_state = random_state
 
     def fit(self, X, y=None):
+        """Fit the augmenter. This is a no-op since there are no learnable parameters.
+        We just initialize the random state here."""
         del X, y  # unused
         self.rng_ = np.random.RandomState(self.random_state)
         return self
 
     def transform(self, X):
+        """Apply augmentation to the input data X.
+        The input X is expected to be a 2D array of shape (n_samples, 1+n_features),
+        where the first column contains the raw waveforms as numpy arrays."""
         if not self.enabled:
             # Keep as object array to allow variable-length signals
             return X
