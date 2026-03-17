@@ -106,7 +106,13 @@ class TunableBaseSampler(BaseSampler):
         X_new, y_new = self._resample(X, y, classes, **params)
         return X_new, y_new
 
-    def _resample(self, X: NDArray[np.floating], y: NDArray[np.floating] | NDArray[np.bool_], classes: NDArray[np.integer], **params) -> tuple[np.ndarray, np.ndarray]:
+    def _resample(
+        self,
+        X: NDArray[np.floating],
+        y: NDArray[np.floating] | NDArray[np.bool_],
+        classes: NDArray[np.integer],
+        **params,
+    ) -> tuple[np.ndarray, np.ndarray]:
         """To be implemented in subclasses."""
         raise NotImplementedError("Subclasses should implement this method.")
 
@@ -223,6 +229,21 @@ class SMOTESampler(TunableBaseSampler, BaseSMOTE):  # type: ignore[misc]
         artificial_only: bool = False,
         **kwargs,
     ):
+        """Custom SMOTE oversampler that can also generate only artificial samples without copying existing ones.
+
+        Note that the undersampling is performed only if artificial_only is True, i.e. no real samples are droped unless
+        this is specified.
+
+        :param enabled: Whether to enable this sampler
+        :param sampling_strategy: What sampling strategy to use
+            - "auto": resample all classes to the maximum class count
+            - dict|list: specific counts or multipliers per class,
+            - int: specific count for all classes,
+            - float: multiply max class count by float for all classes
+        :param additional_group_classes: Columns in X to use as additional group identifiers
+        :param random_state: Random seed for reproducibility
+        :param artificial_only: If True, only generate synthetic samples without copying existing ones
+        """
         super().__init__(
             enabled=enabled,
             additional_group_classes=additional_group_classes,
@@ -234,7 +255,7 @@ class SMOTESampler(TunableBaseSampler, BaseSMOTE):  # type: ignore[misc]
         self.artificial_only = artificial_only
 
     def _fit_resample(self, X: np.ndarray, y: np.ndarray, **params):  # type: ignore
-        self._validate_estimator()
+        self._validate_estimator()  # must be called before _resample to initialize nearest neighbors estimator
         return super()._fit_resample(X, y, **params)
 
     def _resample(self, X: np.ndarray, y: np.ndarray, classes: np.ndarray, **params) -> tuple[np.ndarray, np.ndarray]:
@@ -362,7 +383,22 @@ class VAESampler(TunableBaseSampler):
         if hasattr(self, "vae_model"):
             self.vae_model.epochs = value
 
-    def _resample(self, X: NDArray[np.floating], y: NDArray[np.floating] | NDArray[np.bool_], classes: NDArray[np.integer], **params) -> tuple[np.ndarray, np.ndarray]:
+    def _resample(
+        self,
+        X: NDArray[np.floating],
+        y: NDArray[np.floating] | NDArray[np.bool_],
+        classes: NDArray[np.integer],
+        **params,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Resample the dataset using a VAE model to generate synthetic samples.
+        :param X: Input features
+        :type X: NDArray[np.floating]
+        :param y: Target labels
+        :type y: NDArray[np.floating] | NDArray[np.bool_]
+        :param classes: Class labels for each sample
+        :type classes: NDArray[np.integer]
+        :return: Resampled features and labels
+        :rtype: tuple[np.ndarray, np.ndarray]"""
         del params  # unused
 
         self.vae_model.train(X, y, classes)
