@@ -25,6 +25,7 @@ def normalize_sex_mf(value):
     Normalize sex/gender to 'm' or 'f'.
     Returns None if unknown.
     Accepts also 'w' (women) used in some SVD-related metadata.
+    We used mapping f->1 m->0 in the past, so we accept them for backward compatibility, but they are not recommended.
     """
     if value is None:
         return None
@@ -470,7 +471,7 @@ def _get_smile(feature_set: str, feature_level: str):
     if key in _SMILE_SINGLETONS:
         return _SMILE_SINGLETONS[key]
 
-    try:
+    try: # TODO: why is it done here?
         import opensmile
     except ImportError as e:
         raise ImportError(
@@ -528,7 +529,7 @@ class OpenSmileExtractor(FeatureExtractor):
 
         smile = _get_smile(feature_set=feature_set, feature_level=feature_level)
 
-        # opensmile returns a pandas.DataFrame for process_signal(); for functionals it's typically 1 row. :contentReference[oaicite:3]{index=3}
+        # opensmile returns a pandas.DataFrame for process_signal(); for functionals it's typically 1 row.
         df = smile.process_signal(x, sr)
 
         # Flatten in stable column order

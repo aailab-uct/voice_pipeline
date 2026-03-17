@@ -17,6 +17,7 @@ class KANClassifier(BaseEstimator, ClassifierMixin):
     """
 
     def __init__(self, hidden=8, grid=5, k=3, steps=200, lr=1e-3, seed=0, threshold=0.5, device="cpu"):
+        """TODO: missing docstring"""
         # Network hyperparameters
         self.hidden = hidden  # number of neurons in the hidden layer
         self.grid = grid  # number of grid points for spline functions in KAN

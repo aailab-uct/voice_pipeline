@@ -61,10 +61,11 @@ def is_adult(age) -> bool:
     Handles None, strings, floats safely.
     """
     if age is None:
+        # TODO: We should probably handle this in one safer place, as otherwise we might miss errors in other steps
         return False
     try:
         return float(age) >= MIN_AGE
-    except Exception:
+    except Exception:# TODO: dtto
         return False
 
 
@@ -77,9 +78,10 @@ F0_RANGES = {
     "f": (100.0, 600.0),
 }
 
-DEFAULT_F0_RANGE = (60.0, 250.0)
+DEFAULT_F0_RANGE = (60.0, 250.0)  # TODO: Why? this makes litlle sense if m starts at 75 and f at 100.
 
-def normalize_sex_mf(value):
+
+def normalize_sex_mf(value):  # TODO: duplicate code of feature_extraction.py
     """
     Normalize sex/gender to 'm' or 'f'.
     Returns None if unknown.
@@ -116,6 +118,7 @@ def f0_range_for_sex(sex_mf):
 PVQD_ROOT = Path("data") / "PVQD"
 PVQD_DEMOGRAPHICS_XLSX = PVQD_ROOT / "Demographics.xlsx"
 
+
 def load_pvqd_metadata(xlsx_path: Path):
     df = openpyxl.load_workbook(xlsx_path, data_only=True).active
     rows = list(df.iter_rows(values_only=True))
@@ -124,7 +127,9 @@ def load_pvqd_metadata(xlsx_path: Path):
 
     out = []
     for r in rows[1:]:
-        pid = r[col.get("Participant ID", col.get("Participant ID "))]
+        pid = r[
+            col.get("Participant ID", col.get("Participant ID "))
+        ]  # TODO: doopravdy je tohle nutne? nestaci ten strip nahore?
         if pid is None:
             continue
         out.append(
@@ -132,29 +137,31 @@ def load_pvqd_metadata(xlsx_path: Path):
                 "participant_id": str(pid).strip(),
                 "sex": r[col.get("Gender")],
                 "age": r[col.get("Age")],
-                "diagnosis": r[col.get("Diagnosis", col.get("Diagnosis "))],
+                "diagnosis": r[col.get("Diagnosis", col.get("Diagnosis "))],  # TODO: dtto
             }
         )
     return out
 
+
 def normalize_pvqd_pathology(value):
     if value is None:
         return "healthy"
-    s = str(value).strip()
-    if not s:
+    pathology_string = str(value).lower().strip()
+    if not pathology_string:
         return "healthy"
-    s_low = s.lower()
+
 
     # PVQD sheet uses N for normal, and sometimes Y as "has pathology"
-    if s_low in {"n", "normal"}:
+    if pathology_string in {"n", "normal"}:
         return "healthy"
-    if s_low == "y":
+    if pathology_string == "y":
         return "pathology"
 
     # keep original text but normalize whitespace around commas
-    s = re.sub(r"\s*,\s*", ", ", s.strip())
-    s = re.sub(r"\s+", " ", s)
-    return s
+    pathology_string = re.sub(r"\s*,\s*", ", ", pathology_string.strip())
+    pathology_string = re.sub(r"\s+", " ", pathology_string)
+    return pathology_string
+
 
 def pvqd_is_a_vowel_file(fname: str, participant_id: str) -> bool:
     """
@@ -162,6 +169,7 @@ def pvqd_is_a_vowel_file(fname: str, participant_id: str) -> bool:
     Works for common patterns like:
       BL01_a.wav, BL01-a.wav, BL01_vowel_a.wav, BL01_A.wav
     """
+    # TODO: ta db je doopravdy tak spatne oanotovana ze je treba tolik kroku?
     f = fname.lower()
     pid = participant_id.lower()
 
@@ -171,7 +179,7 @@ def pvqd_is_a_vowel_file(fname: str, participant_id: str) -> bool:
     base = Path(f).stem
 
     # accept token a separated by _ or -
-    if re.search(rf"(^|[_-])a([_-]|$)", base):
+    if re.search(r"(^|[_-])a([_-]|$)", base):
         return True
 
     # accept explicit 'vowel a' like patterns
@@ -179,6 +187,7 @@ def pvqd_is_a_vowel_file(fname: str, participant_id: str) -> bool:
         return True
 
     return False
+
 
 def process_pvqd_file(wav_path: Path, src_row: dict, writer, record_idx: int) -> int:
 
@@ -206,7 +215,7 @@ def process_pvqd_file(wav_path: Path, src_row: dict, writer, record_idx: int) ->
     row = {
         "id": record_id,
         "sessionid": None,
-        "talkerid": f"PVQD_{src_row.get('participant_id')}",
+        "talkerid": f"PVQD_{src_row.get("participant_id")}",
         "talkersex": sex_mf,
         "age": src_row.get("age"),
         "pathologies": normalize_pvqd_pathology(src_row.get("diagnosis")),
@@ -219,6 +228,7 @@ def process_pvqd_file(wav_path: Path, src_row: dict, writer, record_idx: int) ->
 
     writer.writerow(row)
     return record_idx + 1
+
 
 # ============================================================
 # ======================= SVD DATASET ========================
@@ -302,9 +312,7 @@ def process_svd_file(nsp_path: Path, metadata, writer, record_idx):
         if m > 1.0:
             x /= m
 
-    x, _ = librosa.effects.trim(
-        x, top_db=15, frame_length=256 * fs // 50000, hop_length=65 * fs // 50000
-    )
+    x, _ = librosa.effects.trim(x, top_db=15, frame_length=256 * fs // 50000, hop_length=65 * fs // 50000)
 
     sf.write(OUT_DIR / wav_name, x, fs)
 
@@ -318,7 +326,7 @@ def process_svd_file(nsp_path: Path, metadata, writer, record_idx):
     row = {
         "id": record_id,
         "sessionid": src.get("sessionid"),
-        "talkerid": f"SVD_{src.get('talkerid')}",
+        "talkerid": f"SVD_{src.get("talkerid")}",
         "talkersex": sex_mf,
         "age": src.get("talkerage"),
         "pathologies": normalize_pathology(src.get("pathologies")),
@@ -375,9 +383,7 @@ def process_voiced_file(dat_path: Path, writer, record_idx):
     fs = int(record.fs)
     x = np.array(x, dtype=np.float32)
 
-    x, _ = librosa.effects.trim(
-        x, top_db=15, frame_length=256 * fs // 50000, hop_length=65 * fs // 50000
-    )
+    x, _ = librosa.effects.trim(x, top_db=15, frame_length=256 * fs // 50000, hop_length=65 * fs // 50000)
 
     sex_mf = normalize_sex_mf(info.get("gender"))
     fmin, fmax = f0_range_for_sex(sex_mf)
@@ -493,14 +499,8 @@ def process_avfad_file(wav_path: Path, src_row: dict, vowel: str, writer, record
         sound = parselmouth.Sound(x, sampling_frequency=int(fs))
         pitch = call(sound, "To Pitch", 0.0, fmin, fmax)
         mean_f0 = call(pitch, "Get mean", 0, 0, "Hertz")
-    except Exception as e:
-        print(
-            "AVFAD skipped:",
-            src_row.get("file_id"),
-            wav_path.name,
-            "fs=", fs,
-            "len=", len(x)/fs
-        )
+    except Exception as e: # TODO: unused e
+        print("AVFAD skipped:", src_row.get("file_id"), wav_path.name, "fs=", fs, "len=", len(x) / fs)
         return record_idx
 
     record_id = f"{record_idx:04d}"
@@ -508,11 +508,7 @@ def process_avfad_file(wav_path: Path, src_row: dict, vowel: str, writer, record
 
     sf.write(OUT_DIR / wav_name, x, int(fs))
 
-    p = normalize_pathology(
-        str(src_row.get("pathology"))
-        if src_row.get("pathology") is not None
-        else None
-    )
+    p = normalize_pathology(str(src_row.get("pathology")) if src_row.get("pathology") is not None else None)
 
     if p.strip().lower() == "normal":
         p = "healthy"
@@ -520,7 +516,7 @@ def process_avfad_file(wav_path: Path, src_row: dict, vowel: str, writer, record
     row = {
         "id": record_id,
         "sessionid": None,
-        "talkerid": f"AVFAD_{src_row.get('file_id')}",
+        "talkerid": f"AVFAD_{src_row.get("file_id")}",
         "talkersex": sex_mf,
         "age": src_row.get("age"),
         "pathologies": p,
@@ -538,6 +534,7 @@ def process_avfad_file(wav_path: Path, src_row: dict, vowel: str, writer, record
 # ============================================================
 # Public API
 # ============================================================
+
 
 def build_dataset():
 
@@ -572,6 +569,7 @@ def build_dataset():
             for p in PVQD_ROOT.rglob("*.wav"):
                 if pvqd_is_a_vowel_file(p.name, pid):
                     idx = process_pvqd_file(p, r, writer, idx)
+
 
 if __name__ == "__main__":
     build_dataset()

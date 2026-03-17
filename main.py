@@ -9,23 +9,21 @@ import argparse
 import socket
 import time
 
-from sklearn.base import clone
-from sklearn.metrics import recall_score
 import sys
 from contextlib import contextmanager
 from tqdm import tqdm
-from sklearn.model_selection import ParameterGrid
-
 
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.neighbors import KNeighborsClassifier
-from sklearn.model_selection import StratifiedGroupKFold, GridSearchCV
+from sklearn.model_selection import StratifiedGroupKFold, GridSearchCV, ParameterGrid
 from sklearn.feature_selection import SelectKBest, mutual_info_classif
+from sklearn.base import clone
 from sklearn.metrics import (
     make_scorer,
     accuracy_score,
     balanced_accuracy_score,
     confusion_matrix,
+    recall_score
 )
 
 from imblearn.pipeline import Pipeline as ImbPipeline
@@ -38,7 +36,7 @@ from feature_extraction import (
     TimeDomainFeaturesExtractor,
     ZCRExtractor,
     SpectralFeaturesExtractor,
-    OpenSmileExtractor
+    OpenSmileExtractor,
 )
 from signal_augmenters import RawAugmenter
 from feature_augmenters import FeatureAugmenter
@@ -47,7 +45,7 @@ from dataset_filtration import build_dataset
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.feature_selection import SelectFromModel
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.feature_selection import RFECV
+from sklearn.feature_selection import RFECV # TODO: purge unused imports
 
 
 import warnings
@@ -59,16 +57,21 @@ warnings.filterwarnings("ignore", message="All-NaN slice encountered")
 # 1) Build imblearn pipeline
 # ==========
 
+
 class ReplaceNaN(BaseEstimator, TransformerMixin):
+    # TODO: this should be probably elsewhere
     """
     Replaces NaN, +Inf, -Inf with 0.0
     """
+
     def fit(self, X, y=None):
+        del X, y  # unused
         return self
 
     def transform(self, X):
         X = np.asarray(X, dtype=np.float32)
         return np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
+
 
 def build_pipeline(pipeline_params: dict | None = None, random_state: int = 42) -> ImbPipeline:
     """
@@ -86,23 +89,36 @@ def build_pipeline(pipeline_params: dict | None = None, random_state: int = 42) 
 
     pipe = ImbPipeline(
         steps=[
-            ("raw_aug",    RawAugmenter(enabled=False, noise_std=0.005, random_state=random_state)),
-            ("mfcc",       MFCCExtractor(enabled=True, sr=50000, n_mfcc=20)),
-            ("timedomain", TimeDomainFeaturesExtractor(sr=50000, enabled=True, sex_col=1,
-                                                       f0_range_m=(75.0, 300.0),
-                                                       f0_range_f=(100.0, 600.0))),
-            ("zcr",        ZCRExtractor(sr=50000, enabled=True)),
-            ("spectral",   SpectralFeaturesExtractor(sr=50000, enabled=True)),
-            ("opensmile",  OpenSmileExtractor(enabled=False, sr=50000,
-                                              feature_set="GeMAPS",
-                                              feature_level="functionals")),
-            ("drop_sig",   DropSignalColumn()),
-            ("replace_nan", ReplaceNaN()),
-            ("scaler",     StandardScaler()),
-            ("selector",   pipeline_params.get("selector__instance", SelectKBest(score_func=mutual_info_classif, k=20))),
-            ("feat_aug",   FeatureAugmenter(enabled=True, std_factor=0.02, random_state=random_state)),
-            ("resampler",  SMOTESampler(enabled=True, random_state=random_state, artificial_only=False, sampling_strategy="auto")),
-            ("clf",        RandomForestClassifier(random_state=random_state, n_jobs=-1)),
+            ("raw_aug", RawAugmenter(enabled=False, noise_std=0.005, random_state=random_state)),
+            ("mfcc", MFCCExtractor(enabled=True, sr=50000, n_mfcc=20)),  # TODO: hardcoded st is not probably best idea
+            (
+                "timedomain",
+                TimeDomainFeaturesExtractor(
+                    sr=50000, enabled=True, sex_col=1, f0_range_m=(75.0, 300.0), f0_range_f=(100.0, 600.0)
+                ),
+            ),
+            ("zcr", ZCRExtractor(sr=50000, enabled=True)),
+            ("spectral", SpectralFeaturesExtractor(sr=50000, enabled=True)),
+            (
+                "opensmile",
+                OpenSmileExtractor(enabled=False, sr=50000, feature_set="GeMAPS", feature_level="functionals"),
+            ),
+            ("drop_sig", DropSignalColumn()),
+            (
+                "replace_nan",
+                ReplaceNaN(),
+            ),  # TODO: i think here should be explanaition why this is needed, moreover wouldn't be preferable to handle this at the feature level?
+            ("scaler", StandardScaler()),
+            (
+                "selector",
+                pipeline_params.get("selector__instance", SelectKBest(score_func=mutual_info_classif, k=20)),
+            ),  # TODO: i think default should be no feature selection
+            ("feat_aug", FeatureAugmenter(enabled=True, std_factor=0.02, random_state=random_state)),
+            (
+                "resampler",
+                SMOTESampler(enabled=True, random_state=random_state, artificial_only=False, sampling_strategy="auto"),
+            ),
+            ("clf", RandomForestClassifier(random_state=random_state, n_jobs=-1)),
         ]
     )
 
@@ -125,7 +141,7 @@ def build_pipeline(pipeline_params: dict | None = None, random_state: int = 42) 
 
 
 def make_synthetic_audio_dataset(n_records=60, sr=16000, random_state=0):
-    """
+    """TODO: deleta as this is not longer needed, move elsewhere if needed
     Create a toy dataset:
     - X: each sample is one "recording" and demographic features
     - y: binary classification (healthy/pathological)
@@ -161,6 +177,7 @@ def log_results(
     experiment_description: str | None = None,
     config: dict | None = None,
 ) -> Path:
+    """TODO: add docstring"""
 
     df = pd.DataFrame(cv_results)
 
@@ -174,9 +191,9 @@ def log_results(
     results_txt = run_dir / "gridsearch.txt"
     with results_txt.open("w") as f:
         if "mean_test_uar" in cv_results:
-            f.write(f"Best UAR: {np.nanmax(cv_results['mean_test_uar'])}\n")
+            f.write(f"Best UAR: {np.nanmax(cv_results["mean_test_uar"])}\n")
         if "mean_test_accuracy" in cv_results:
-            f.write(f"Best ACC: {np.nanmax(cv_results['mean_test_accuracy'])}\n")
+            f.write(f"Best ACC: {np.nanmax(cv_results["mean_test_accuracy"])}\n")
         f.write(f"Machine: {socket.gethostname()}\n")
 
         if experiment_description is not None:
@@ -194,17 +211,20 @@ def log_results(
 
     return run_dir
 
+
 def per_pathology_uar(best_estimator, X, y, groups, pathologies, cv, healthy_name="healthy"):
+    """TODO: add docstring, probably should be moved elsewhere, ESPECIALLY as it is not used in this file"""
+    # TODO: add comments, this is a bit hard to understand at first glance
     y_true_all, y_pred_all, p_all = [], [], []
 
-    for tr, te in cv.split(X, y, groups):
-        est = clone(best_estimator)
-        est.fit(X[tr], y[tr])
-        yp = est.predict(X[te])
+    for train, test in cv.split(X, y, groups):
+        estimator = clone(best_estimator)
+        estimator.fit(X[train], y[train])
+        yp = estimator.predict(X[test])
 
-        y_true_all.append(y[te])
+        y_true_all.append(y[test])
         y_pred_all.append(yp)
-        p_all.append(pathologies[te])
+        p_all.append(pathologies[test])
 
     y_true_all = np.concatenate(y_true_all)
     y_pred_all = np.concatenate(y_pred_all)
@@ -220,7 +240,7 @@ def per_pathology_uar(best_estimator, X, y, groups, pathologies, cv, healthy_nam
         yt = y_true_all[m]
         yp = y_pred_all[m]
 
-        tp = int(((yt == 1) & (yp == 1)).sum())
+        tp = int(((yt == 1) & (yp == 1)).sum())  # TODO: sklearn.metrics.confusion_matrix would be preferable
         fn = int(((yt == 1) & (yp == 0)).sum())
         fp = int(((yt == 0) & (yp == 1)).sum())
         tn = int(((yt == 0) & (yp == 0)).sum())
@@ -228,18 +248,11 @@ def per_pathology_uar(best_estimator, X, y, groups, pathologies, cv, healthy_nam
         r0, r1 = recall_score(yt, yp, labels=[0, 1], average=None, zero_division=0)
         uar = 0.5 * (r0 + r1)
 
-        rows.append((
-            p, uar,
-            tp, fn, fp, tn,
-            int((p_all[m] == p).sum()),
-            int((np.char.lower(p_all[m]) == healthy_name).sum())
-        ))
+        rows.append(
+            (p, uar, tp, fn, fp, tn, int((p_all[m] == p).sum()), int((np.char.lower(p_all[m]) == healthy_name).sum()))
+        )
 
-    df = pd.DataFrame(rows, columns=[
-        "pathology", "UAR",
-        "TP", "FN", "FP", "TN",
-        "n_pathology", "n_healthy"
-    ])
+    df = pd.DataFrame(rows, columns=["pathology", "UAR", "TP", "FN", "FP", "TN", "n_pathology", "n_healthy"])
 
     return df.sort_values("UAR", ascending=False)
 
@@ -278,11 +291,11 @@ def repeated_cv_evaluation(
 
 
 @contextmanager
-def tqdm_from_verbose(total, desc="GridSearch", unit="fit"):
+def tqdm_from_verbose(total, desc="GridSearch", unit="fit"):  # TODO: imo shouldbe elsewhere
     """
     Help functions for tqdm progress bar for grid search.
     It scann output for gridsearch verbose and count
-    them and by that update progress ar
+    them and by that update progress ar # TODO: missing end of sentence
     """
     pbar = tqdm(total=total, desc=desc, unit=unit)
     old_stdout = sys.stdout
@@ -311,7 +324,9 @@ def main(config: dict[str, Any] | None = None):
     """
     Run the pipeline.
     """
-    if config is None:
+    if (
+        config is None
+    ):  # TODO: I think for simplicity whe should remove any defaults from the main and move it to default config file
         config = {
             "param_grid": [
                 {
@@ -346,8 +361,7 @@ def main(config: dict[str, Any] | None = None):
     )
 
     # 1.1) Encode groups to number
-    le = LabelEncoder()
-    groups = le.fit_transform(groups)
+    groups = LabelEncoder().fit_transform(groups)
 
     # 2) Build pipeline
     pipe = build_pipeline(config.get("pipeline", {}), random_state=config.get("random_state", 42))
@@ -387,16 +401,16 @@ def main(config: dict[str, Any] | None = None):
         refit=refit,
         verbose=2,
         error_score="raise",
-        # n_jobs=-1, # causes issues with caching as the forked processes copy the cache.
+        n_jobs=None,  # -1 causes issues with caching as the forked processes copy the cache.
     )
 
     # calculate number of iterations for tqdm in gridsearch
     n_candidates = len(list(ParameterGrid(param_grid)))
     n_folds = cv.get_n_splits(X, y, groups)
-    total = n_candidates * n_folds
+    total_training_steps = n_candidates * n_folds
 
     start_time = time.time()
-    with tqdm_from_verbose(total=total):
+    with tqdm_from_verbose(total=total_training_steps):
         grid_search.fit(X, y, groups=groups)
     end_time = time.time()
     print("Fit time:", end_time - start_time)
@@ -414,12 +428,16 @@ def main(config: dict[str, Any] | None = None):
     if config.get("n_repeats", 0) > 0:
         n_splits = config.get("cv").get_n_splits() if hasattr(config.get("cv"), "get_n_splits") else 10
         df_repeated = repeated_cv_evaluation(
-            grid_search.best_estimator_, X, y, groups,
+            grid_search.best_estimator_,
+            X,
+            y,
+            groups,
             n_splits=n_splits,
             n_repeats=config.get("n_repeats"),
         )
         df_repeated.to_csv(run_dir / "repeated_cv.csv", index=False)
-        print(f"Repeated CV UAR: {df_repeated['UAR'].mean():.4f} ± {df_repeated['UAR'].std():.4f}")
+        print(f"Repeated CV UAR: {df_repeated["UAR"].mean():.4f} ± {df_repeated["UAR"].std():.4f}")
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run voice pathology classification pipeline.")

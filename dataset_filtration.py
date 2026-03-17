@@ -33,7 +33,7 @@ def build_dataset(
     selected_fs: int | None = None,
     drop_nan_f0: bool = True,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """
+    """TODO: wrong docstring format
     Build X, y, groups, pathologies and datasets for sklearn pipeline.
 
     Labeling:
@@ -96,8 +96,8 @@ def build_dataset(
         if drop_nan_f0 and row.get("nan_f0") == "True":
             continue
 
-        original_file = AUDIO_DIR / f"record_{row['id']}.wav"
-        cached_file = AUDIO_DIR / f"record_{row['id']}_{selected_fs}.wav" if selected_fs is not None else original_file
+        original_file = AUDIO_DIR / f"record_{row["id"]}.wav"
+        cached_file = AUDIO_DIR / f"record_{row["id"]}_{selected_fs}.wav" if selected_fs is not None else original_file
         if cached_file.exists():
             signal, fs = sf.read(cached_file, dtype="float32")
         elif original_file.exists():
@@ -106,9 +106,9 @@ def build_dataset(
                 signal = librosa.resample(signal, orig_sr=fs, target_sr=selected_fs, res_type="soxr_vhq")
                 fs = selected_fs
                 signal = signal.astype(np.float32)
-                sf.write(AUDIO_DIR / f"record_{row['id']}_{selected_fs}.wav", data=signal, samplerate=selected_fs)
+                sf.write(AUDIO_DIR / f"record_{row["id"]}_{selected_fs}.wav", data=signal, samplerate=selected_fs)
         else:
-            print(f"Warning: audio file for record {row['id']} not found, skipping.")
+            print(f"Warning: audio file for record {row["id"]} not found, skipping.")
             continue
 
         features = [signal]
@@ -118,14 +118,14 @@ def build_dataset(
             features.append(age)
 
         if include_sex:
-            match row["talkersex"].lower():
+            match row["talkersex"].lower():  # TODO: this probably should already be normalized at his point
                 case "f" | "w" | "female" | "woman":
                     sex = 1
                 case "m" | " male" | "man":
                     sex = 0
                 case _:
                     sex = np.nan
-                    print(f"Warning: unknown sex '{row['talkersex']}' for record {row['id']}")
+                    print(f"Warning: unknown sex '{row["talkersex"]}' for record {row["id"]}")
             features.append(sex)
 
         is_healthy = row["pathologies"].lower() == "healthy"
@@ -147,12 +147,12 @@ def build_dataset(
 
 
 # ============================================================
-# CLI entry point
+# Testing
 # ============================================================
 
 
 def main():
-    X, y, groups, pathologies, datasets = build_dataset(
+    X, y, groups, _, _ = build_dataset(
         excluded_pathologies={"Sängerstimme", "Gesangsstimme"},
         include_age=True,
         include_sex=True,
