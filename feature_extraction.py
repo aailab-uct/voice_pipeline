@@ -8,6 +8,8 @@ from scipy.stats import skew
 import spkit as sp
 from sklearn.base import BaseEstimator, TransformerMixin
 import atexit
+from utils import (_floor_power_of_2)
+import opensmile
 
 from src.feature_caching import FeatureCache
 from src.hashable import HashableArray, HashableDict
@@ -164,7 +166,7 @@ class MFCCExtractor(FeatureExtractor):
     Output: 2 * n_mfcc features per sample.
     """
 
-    def __init__(self, sr, n_mfcc=20, enabled=True, use_std=True, cache_disabled=False):
+    def __init__(self, sr=16000, n_mfcc=20, enabled=True, use_std=True, cache_disabled=False):
         """
         Extracts MFCC features: mean and std over time for each coefficient.
 
@@ -212,7 +214,7 @@ class TimeDomainFeaturesExtractor(FeatureExtractor):
 
     def __init__(
         self,
-        sr,
+        sr=16000,
         fmin=60.0,
         fmax=250.0,
         enabled=True,
@@ -363,20 +365,28 @@ class TimeDomainFeaturesExtractor(FeatureExtractor):
 
 class ZCRExtractor(FeatureExtractor):
     """
-    Extracts Zero Crossing Rate feature.
-    Output: 1 feature per sample (mean ZCR).
+    Extracts Zero Crossing Rate (ZCR) features.
+    Output: up to 2 features per sample (mean and/or std of ZCR).
+
+    Frame size and hop length are derived automatically from the sampling rate
+    to preserve the same time resolution as the reference 50 kHz configuration.
     """
 
-    def __init__(self, sr, use_mean=True, use_std=True, enabled=True, cache_disabled=False):
+    def __init__(self, sr=16000, use_mean=True, use_std=True, enabled=True, cache_disabled=False):
         """
-        Extracts Zero Crossing Rate feature.
-        Output: 1 feature per sample (mean ZCR).
-
-        :param sr: Sampling rate
-        :param use_mean: Whether to use mean ZCR feature
-        :param use_std: Whether to use std ZCR feature
-        :param enabled: Whether the extractor is enabled
-        :param cache_disabled: Whether caching is disabled
+        Parameters
+        ----------
+        sr : int, optional
+            Sampling rate of the input signal. Default: 16000.
+        use_mean : bool, optional
+            Whether to include mean ZCR in the output. Default: True.
+        use_std : bool, optional
+            Whether to include std of ZCR in the output. Default: True.
+        enabled : bool, optional
+            Whether the extractor is enabled. Default: True.
+        cache_disabled : bool, optional
+            Whether to disable caching. Should be True when raw augmentation
+            is applied. Default: False.
         """
         super().__init__(enabled=enabled, cache_disabled=cache_disabled)
         self.sr = sr
@@ -384,44 +394,77 @@ class ZCRExtractor(FeatureExtractor):
         self.use_std = use_std
 
     @staticmethod
-    def _extract_full_features(x: np.ndarray, sr) -> np.ndarray:  # type: ignore[override]
-        frame_length = 2048 * sr // 50000
-        hop_length = 512 * sr // 50000
-        zcr = librosa.feature.zero_crossing_rate(y=x, frame_length=frame_length, hop_length=hop_length)[0]
-        zcr_mean = np.mean(zcr)
-        zcr_std = np.std(zcr)
-        return np.array([zcr_mean, zcr_std], dtype=np.float32)
+    def _extract_full_features(x: np.ndarray, sr: int) -> np.ndarray:
+        """
+        Extract mean and std of ZCR from a waveform.
+
+        Frame length and hop length are scaled proportionally from the
+        reference values (frame=2048, hop=512 at 50 kHz) and floored
+        to the nearest power of 2.
+
+        Parameters
+        ----------
+        x : np.ndarray
+            1D waveform array.
+        sr : int
+            Sampling rate.
+
+        Returns
+        -------
+        np.ndarray
+            Array of shape (2,): [zcr_mean, zcr_std], dtype float32.
+        """
+        n_fft = _floor_power_of_2(2048 * sr // 50000)
+        hop_length = _floor_power_of_2(512 * sr // 50000)
+        zcr = librosa.feature.zero_crossing_rate(y=x, frame_length=n_fft, hop_length=hop_length)[0]
+        return np.array([np.mean(zcr), np.std(zcr)], dtype=np.float32)
 
     def extract_feature(self, x: np.ndarray) -> np.ndarray:
+        """
+        Extract enabled ZCR features from a single waveform.
+
+        Parameters
+        ----------
+        x : np.ndarray
+            1D waveform array.
+
+        Returns
+        -------
+        np.ndarray
+            Array of shape (k,) where k = sum([use_mean, use_std]).
+        """
         features = self.cached_extraction(x, sr=self.sr)
-        mask = [self.use_mean, self.use_std]
-        return features[mask]
+        return features[[self.use_mean, self.use_std]]
 
 
 class SpectralFeaturesExtractor(FeatureExtractor):
     """
     Extracts spectral features with per-feature enable switches.
+
+    Features (in order): spectral flatness, rolloff, centroid, contrast (7 bands).
+    Frame size and hop length are derived automatically from the sampling rate.
     """
 
-    def __init__(
-        self,
-        sr,
-        use_flatness=True,
-        use_rolloff=True,
-        use_centroid=True,
-        use_contrast=True,
-        enabled=True,
-        cache_disabled=False,
-    ):
+    def __init__(self, sr=16000, use_flatness=True, use_rolloff=True,
+                 use_centroid=True, use_contrast=True, enabled=True, cache_disabled=False):
         """
-        Extracts spectral features with per-feature enable switches.
-        :param sr: Sampling rate
-        :param use_flatness: Whether to use spectral flatness feature
-        :param use_rolloff: Whether to use spectral rolloff feature
-        :param use_centroid: Whether to use spectral centroid feature
-        :param use_contrast: Whether to use spectral contrast features
-        :param enabled: Whether the extractor is enabled
-        :param cache_disabled: Whether caching is disabled
+        Parameters
+        ----------
+        sr : int, optional
+            Sampling rate of the input signal. Default: 16000.
+        use_flatness : bool, optional
+            Whether to include spectral flatness. Default: True.
+        use_rolloff : bool, optional
+            Whether to include spectral rolloff. Default: True.
+        use_centroid : bool, optional
+            Whether to include spectral centroid. Default: True.
+        use_contrast : bool, optional
+            Whether to include spectral contrast (7 sub-band values). Default: True.
+        enabled : bool, optional
+            Whether the extractor is enabled. Default: True.
+        cache_disabled : bool, optional
+            Whether to disable caching. Should be True when raw augmentation
+            is applied. Default: False.
         """
         super().__init__(enabled=enabled, cache_disabled=cache_disabled)
         self.sr = sr
@@ -431,29 +474,54 @@ class SpectralFeaturesExtractor(FeatureExtractor):
         self.use_contrast = use_contrast
 
     @staticmethod
-    def _extract_full_features(x: np.ndarray, sr) -> np.ndarray:  # type: ignore[override]
-        n_fft = 2048 * sr // 50000
-        hop_length = 512 * sr // 50000
+    def _extract_full_features(x: np.ndarray, sr: int) -> np.ndarray:
+        """
+        Extract all spectral features from a waveform.
 
+        Frame length and hop length are scaled proportionally from the
+        reference values (n_fft=2048, hop=512 at 50 kHz) and floored
+        to the nearest power of 2.
+
+        Parameters
+        ----------
+        x : np.ndarray
+            1D waveform array.
+        sr : int
+            Sampling rate.
+
+        Returns
+        -------
+        np.ndarray
+            Array of shape (10,): [flatness, rolloff, centroid, contrast×7], dtype float32.
+        """
+        n_fft = _floor_power_of_2(2048 * sr // 50000)
+        hop_length = _floor_power_of_2(512 * sr // 50000)
         flatness = np.mean(librosa.feature.spectral_flatness(y=x, n_fft=n_fft, hop_length=hop_length), axis=1)[0]
         rolloff = np.mean(librosa.feature.spectral_rolloff(y=x, sr=sr, n_fft=n_fft, hop_length=hop_length), axis=1)[0]
         centroid = np.mean(librosa.feature.spectral_centroid(y=x, sr=sr, n_fft=n_fft, hop_length=hop_length), axis=1)[0]
         contrast = np.mean(librosa.feature.spectral_contrast(y=x, sr=sr, n_fft=n_fft, hop_length=hop_length), axis=1)
-
-        features = np.concatenate(([flatness, rolloff, centroid], contrast))
-
-        return features.astype(np.float32)
+        return np.concatenate(([flatness, rolloff, centroid], contrast)).astype(np.float32)
 
     def extract_feature(self, x: np.ndarray) -> np.ndarray:
-        features = self.cached_extraction(x, sr=self.sr)
-        mask = [
-            self.use_flatness,
-            self.use_rolloff,
-            self.use_centroid,
-        ] + [
-            self.use_contrast
-        ] * len(features[3:])
+        """
+        Extract enabled spectral features from a single waveform.
 
+        Parameters
+        ----------
+        x : np.ndarray
+            1D waveform array.
+
+        Returns
+        -------
+        np.ndarray
+            Array of shape (k,) where k depends on enabled feature switches,
+            dtype float32.
+        """
+        features = self.cached_extraction(x, sr=self.sr)
+        mask = ([self.use_flatness,
+                self.use_rolloff,
+                self.use_centroid] +
+                [self.use_contrast] * len(features[3:]))
         return features[np.array(mask)].astype(np.float32)
 
 # ============================================================
@@ -470,13 +538,6 @@ def _get_smile(feature_set: str, feature_level: str):
     key = (feature_set, feature_level)
     if key in _SMILE_SINGLETONS:
         return _SMILE_SINGLETONS[key]
-
-    try: # TODO: why is it done here?
-        import opensmile
-    except ImportError as e:
-        raise ImportError(
-            "Missing dependency 'opensmile'. Install it via: pip install opensmile"
-        ) from e
 
     fs = getattr(opensmile.FeatureSet, feature_set)
     fl = getattr(opensmile.FeatureLevel, feature_level)
@@ -497,7 +558,7 @@ class OpenSmileExtractor(FeatureExtractor):
 
     def __init__(
         self,
-        sr: int,
+        sr: int = 16000,
         feature_set: str = "ComParE_2016",
         feature_level: str = "functionals",
         enabled: bool = False,

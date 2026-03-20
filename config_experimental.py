@@ -13,13 +13,13 @@ config = {
     # ------------------------------------------------------------------
     # Experiment metadata
     # ------------------------------------------------------------------
-    "experiment_name": "SMOTE_experiment_without_smote",
-    "experiment_description": "article experiment",
+    "experiment_name": "test of functions",
+    "experiment_description": "experiment",
 
     # ------------------------------------------------------------------
     # Dataset
     # ------------------------------------------------------------------
-    "selected_datasets": {"SVD"},       # "SVD" | "AVFAD" "VOICED" "PVQD"
+    "selected_datasets": {"VOICED"},       # "SVD" | "AVFAD" "VOICED" "PVQD"
     "selected_fs": sampling_rate,
     "allowed_vowels": {"a"},
     "allowed_intonations": {"n"},
@@ -43,10 +43,10 @@ config = {
     # ------------------------------------------------------------------
     # Cross-validation & scoring
     # ------------------------------------------------------------------
-    "cv": StratifiedGroupKFold(n_splits=10),
+    "cv": StratifiedGroupKFold(n_splits=5),
     "scoring_mode": "multimetric",
     "refit_metric": "uar",
-    "n_repeats": 1000,          # 0 = vypnuto, jinak počet opakování repeated CV
+    "n_repeats": 2,          # 0 = vypnuto, jinak počet opakování repeated CV
     "plot_uar_per_pathology": True,
     "plot_feature_histograms": True,
 
@@ -55,23 +55,23 @@ config = {
     # ------------------------------------------------------------------
     "pipeline": {
         # Signal augmentation (before feature extraction)
-        "raw_aug__enabled": False,
+        "raw_aug__enabled": True,
         "raw_aug__noise_std": 0.005,
         "raw_aug__random_state": 42,
 
         # Feature extractors
-        "mfcc__enabled": False,
+        "mfcc__enabled": True,
         "mfcc__sr": sampling_rate,
         "mfcc__n_mfcc": 20,
 
         "timedomain__enabled": True,
         "timedomain__sr": sampling_rate,
-        "timedomain__use_zcr": False,
-        "timedomain__use_entropy": False,
-        "timedomain__use_skewness": False,
-        "timedomain__use_diff_pitch": False,
+        "timedomain__use_zcr": True,
+        "timedomain__use_entropy": True,
+        "timedomain__use_skewness": True,
+        "timedomain__use_diff_pitch": True,
 
-        "zcr__enabled": False,
+        "zcr__enabled": True,
         "zcr__sr": sampling_rate,
 
         "spectral__enabled": True,
@@ -83,13 +83,13 @@ config = {
         "opensmile__feature_level": "functionals",
 
         # Feature augmentation (after extraction, before resampling)
-        "feat_aug__enabled": False,
+        "feat_aug__enabled": True,
         "feat_aug__std_factor": 0.01,
         "feat_aug__random_state": 42,
 
         # Feature selection
-        "selector__enabled": False,
-        "selector__instance": SelectKBest(score_func=mutual_info_classif, k=20),
+        "selector__enabled": True,
+        "selector__instance": SelectKBest(score_func=mutual_info_classif, k=5),
         # "selector__instance": SelectFromModel(
         #     estimator=RandomForestClassifier(n_estimators=300, random_state=42, n_jobs=-1, class_weight="balanced"),
         #     threshold="median",
@@ -100,7 +100,7 @@ config = {
         # ),
 
         # Resampling
-        "resampler": SMOTESampler(enabled=False, random_state=42, artificial_only=False, sampling_strategy="auto"),
+        "resampler": SMOTESampler(enabled=True, random_state=42, artificial_only=False, sampling_strategy="auto"),
         # "resampler": VAESampler(enabled=True, random_state=42, artificial_only=False, sampling_strategy="auto"),
 
         # Classifier
@@ -112,10 +112,10 @@ config = {
     # ------------------------------------------------------------------
     "param_grid": [
         {
-            "clf__n_estimators": [200, 300, 400],
-            "clf__max_depth": [None, 10, 20],
+            "clf__n_estimators": [200],
+            "clf__max_depth": [None, 10],
             "clf__min_samples_split": [2, 5],
-            "clf__min_samples_leaf": [1, 3, 5],
+            "clf__min_samples_leaf": [1, 3],
             "clf__max_features": ["sqrt", 0.3],
             "clf__class_weight": [None, "balanced"],
         },

@@ -9,21 +9,15 @@ import argparse
 import socket
 import time
 
-import sys
-from contextlib import contextmanager
 from tqdm import tqdm
-
 from sklearn.preprocessing import StandardScaler, LabelEncoder
-from sklearn.neighbors import KNeighborsClassifier
 from sklearn.model_selection import StratifiedGroupKFold, GridSearchCV, ParameterGrid
-from sklearn.feature_selection import SelectKBest, mutual_info_classif
 from sklearn.base import clone
 from sklearn.metrics import (
     make_scorer,
     accuracy_score,
     balanced_accuracy_score,
     confusion_matrix,
-    recall_score
 )
 
 from imblearn.pipeline import Pipeline as ImbPipeline
@@ -40,13 +34,10 @@ from feature_extraction import (
 )
 from signal_augmenters import RawAugmenter
 from feature_augmenters import FeatureAugmenter
-from oversampling import SMOTESampler, VAESampler
+from oversampling import SMOTESampler
 from dataset_filtration import build_dataset
-from sklearn.base import BaseEstimator, TransformerMixin
-from sklearn.feature_selection import SelectFromModel
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.feature_selection import RFECV # TODO: purge unused imports
-
+from utils import (tqdm_from_verbose, ReplaceNaN)
 
 import warnings
 
@@ -56,78 +47,69 @@ warnings.filterwarnings("ignore", message="All-NaN slice encountered")
 # ==========
 # 1) Build imblearn pipeline
 # ==========
-
-
-class ReplaceNaN(BaseEstimator, TransformerMixin):
-    # TODO: this should be probably elsewhere
-    """
-    Replaces NaN, +Inf, -Inf with 0.0
-    """
-
-    def fit(self, X, y=None):
-        del X, y  # unused
-        return self
-
-    def transform(self, X):
-        X = np.asarray(X, dtype=np.float32)
-        return np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
-
-
 def build_pipeline(pipeline_params: dict | None = None, random_state: int = 42) -> ImbPipeline:
     """
-    imblearn Pipeline:
+    Build an imblearn pipeline for voice pathology classification.
 
-    RawAugment (waveform) ->
-    MFCCExtractor ->
-    StandardScaler ->
-    FeatureAugment (optional jitter) ->
-    SMOTE (train-only resampling) ->
-    LogisticRegression
+    Pipeline steps (in order):
+        raw_aug      – waveform augmentation (noise injection)
+        mfcc         – MFCC feature extraction
+        timedomain   – time-domain features (F0, energy, ...)
+        zcr          – zero-crossing rate
+        spectral     – spectral features
+        opensmile    – OpenSMILE feature extraction
+        drop_sig     – drops raw signal column
+        replace_nan  – replaces NaN/Inf with 0.0
+        scaler       – StandardScaler
+        selector     – optional feature selection (default: passthrough)
+        feat_aug     – feature-space augmentation (jitter)
+        resampler    – SMOTE oversampling (train folds only)
+        clf          – classifier (default: RandomForestClassifier)
+
+    Parameters
+    ----------
+    pipeline_params : dict, optional
+        Flat sklearn-style parameter dict passed to ``pipe.set_params()``.
+        Special keys:
+            ``selector__instance`` – feature selector object (default: passthrough)
+            ``selector__enabled``  – if False, selector is set to passthrough
+            ``clf__instance``      – classifier object (default: RandomForestClassifier)
+    random_state : int, optional
+        Random state passed to all stochastic steps. Default: 42.
+
+    Returns
+    -------
+    ImbPipeline
+        Configured but unfitted pipeline.
     """
     if pipeline_params is None:
         pipeline_params = {}
 
     pipe = ImbPipeline(
         steps=[
-            ("raw_aug", RawAugmenter(enabled=False, noise_std=0.005, random_state=random_state)),
-            ("mfcc", MFCCExtractor(enabled=True, sr=50000, n_mfcc=20)),  # TODO: hardcoded st is not probably best idea
-            (
-                "timedomain",
-                TimeDomainFeaturesExtractor(
-                    sr=50000, enabled=True, sex_col=1, f0_range_m=(75.0, 300.0), f0_range_f=(100.0, 600.0)
-                ),
-            ),
-            ("zcr", ZCRExtractor(sr=50000, enabled=True)),
-            ("spectral", SpectralFeaturesExtractor(sr=50000, enabled=True)),
-            (
-                "opensmile",
-                OpenSmileExtractor(enabled=False, sr=50000, feature_set="GeMAPS", feature_level="functionals"),
-            ),
+            ("raw_aug", RawAugmenter(random_state=random_state)),
+            ("mfcc", MFCCExtractor()),
+            ("timedomain", TimeDomainFeaturesExtractor()),
+            ("zcr", ZCRExtractor()),
+            ("spectral", SpectralFeaturesExtractor()),
+            ("opensmile", OpenSmileExtractor()),
             ("drop_sig", DropSignalColumn()),
-            (
-                "replace_nan",
-                ReplaceNaN(),
-            ),  # TODO: i think here should be explanaition why this is needed, moreover wouldn't be preferable to handle this at the feature level?
+            # with some databases there could be problem in extraction of sme features and NaN could be result
+            ("replace_nan", ReplaceNaN()),
             ("scaler", StandardScaler()),
-            (
-                "selector",
-                pipeline_params.get("selector__instance", SelectKBest(score_func=mutual_info_classif, k=20)),
-            ),  # TODO: i think default should be no feature selection
-            ("feat_aug", FeatureAugmenter(enabled=True, std_factor=0.02, random_state=random_state)),
-            (
-                "resampler",
-                SMOTESampler(enabled=True, random_state=random_state, artificial_only=False, sampling_strategy="auto"),
-            ),
-            ("clf", RandomForestClassifier(random_state=random_state, n_jobs=-1)),
+            ("selector", pipeline_params.get("selector__instance", "passthrough")),
+            ("feat_aug", FeatureAugmenter(random_state=random_state)),
+            ("resampler", SMOTESampler(random_state=random_state)),
+            ("clf", pipeline_params.get("clf__instance", RandomForestClassifier(random_state=random_state, n_jobs=-1))),
         ]
     )
 
     if pipeline_params:
         params = dict(pipeline_params)
 
-        # strip keys handled at pipeline construction time
         selector_enabled = params.pop("selector__enabled", True)
         params.pop("selector__instance", None)
+        params.pop("clf__instance", None)
 
         if not selector_enabled:
             pipe.set_params(selector="passthrough")
@@ -140,45 +122,37 @@ def build_pipeline(pipeline_params: dict | None = None, random_state: int = 42) 
     return pipe
 
 
-def make_synthetic_audio_dataset(n_records=60, sr=16000, random_state=0):
-    """TODO: deleta as this is not longer needed, move elsewhere if needed
-    Create a toy dataset:
-    - X: each sample is one "recording" and demographic features
-    - y: binary classification (healthy/pathological)
-    - groups: speaker IDs (1 group per sample)
-    """
-    rng = np.random.RandomState(random_state)
-
-    X = []
-    y = []
-    groups = []
-
-    for i in range(n_records):
-        label = rng.randint(0, 2)  # binary classes 0 / 1 - healthy/pathological
-        sex = rng.choice([0, 1])  # sex feature: 0/1 - male/female
-        length = rng.randint(int(0.5 * sr), int(1.5 * sr))  # 0.5–1.5 s
-        base = 0.0 if label == 0 else 0.3  # class-dependent mean shift
-        age = rng.randint(20, 60)  # random age between 20 and 60
-        sig = base + 0.1 * rng.randn(length).astype(np.float32)
-        X.append([sig, sex, age])
-        y.append(label)
-        groups.append(i)  # each recording has its own group ID
-
-    X = np.array(X, dtype=object)
-    y = np.array(y)
-    groups = np.array(groups)
-
-    return X, y, groups
-
-
 def log_results(
     cv_results: dict[str, np.ndarray],
     experiment_name: str,
     experiment_description: str | None = None,
     config: dict | None = None,
 ) -> Path:
-    """TODO: add docstring"""
+    """
+    Save cross-validation results to a timestamped directory.
 
+    Creates a new directory under ``results/<experiment_name>_<timestamp>/``
+    containing two files:
+    - ``gridsearch.csv`` – full cv_results as a CSV
+    - ``gridsearch.txt`` – human-readable summary with best UAR/accuracy,
+      hostname, optional description, and configuration dump
+
+    Parameters
+    ----------
+    cv_results : dict[str, np.ndarray]
+        Output of ``GridSearchCV.cv_results_``.
+    experiment_name : str
+        Used as a prefix for the results directory name.
+    experiment_description : str, optional
+        Free-form text appended to the summary file.
+    config : dict, optional
+        Experiment configuration written to the summary file.
+
+    Returns
+    -------
+    Path
+        Path to the created run directory.
+    """
     df = pd.DataFrame(cv_results)
 
     ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -210,51 +184,6 @@ def log_results(
                     f.write(f"{k}: {v}\n")
 
     return run_dir
-
-
-def per_pathology_uar(best_estimator, X, y, groups, pathologies, cv, healthy_name="healthy"):
-    """TODO: add docstring, probably should be moved elsewhere, ESPECIALLY as it is not used in this file"""
-    # TODO: add comments, this is a bit hard to understand at first glance
-    y_true_all, y_pred_all, p_all = [], [], []
-
-    for train, test in cv.split(X, y, groups):
-        estimator = clone(best_estimator)
-        estimator.fit(X[train], y[train])
-        yp = estimator.predict(X[test])
-
-        y_true_all.append(y[test])
-        y_pred_all.append(yp)
-        p_all.append(pathologies[test])
-
-    y_true_all = np.concatenate(y_true_all)
-    y_pred_all = np.concatenate(y_pred_all)
-    p_all = np.concatenate(p_all)
-
-    rows = []
-    for p in np.unique(p_all):
-        if p.lower() == healthy_name:
-            continue
-
-        m = (p_all == p) | (np.char.lower(p_all) == healthy_name)
-
-        yt = y_true_all[m]
-        yp = y_pred_all[m]
-
-        tp = int(((yt == 1) & (yp == 1)).sum())  # TODO: sklearn.metrics.confusion_matrix would be preferable
-        fn = int(((yt == 1) & (yp == 0)).sum())
-        fp = int(((yt == 0) & (yp == 1)).sum())
-        tn = int(((yt == 0) & (yp == 0)).sum())
-
-        r0, r1 = recall_score(yt, yp, labels=[0, 1], average=None, zero_division=0)
-        uar = 0.5 * (r0 + r1)
-
-        rows.append(
-            (p, uar, tp, fn, fp, tn, int((p_all[m] == p).sum()), int((np.char.lower(p_all[m]) == healthy_name).sum()))
-        )
-
-    df = pd.DataFrame(rows, columns=["pathology", "UAR", "TP", "FN", "FP", "TN", "n_pathology", "n_healthy"])
-
-    return df.sort_values("UAR", ascending=False)
 
 
 def repeated_cv_evaluation(
@@ -290,33 +219,6 @@ def repeated_cv_evaluation(
     return pd.DataFrame(rows, columns=["repeat", "fold", "UAR", "accuracy"])
 
 
-@contextmanager
-def tqdm_from_verbose(total, desc="GridSearch", unit="fit"):  # TODO: imo shouldbe elsewhere
-    """
-    Help functions for tqdm progress bar for grid search.
-    It scann output for gridsearch verbose and count
-    them and by that update progress ar # TODO: missing end of sentence
-    """
-    pbar = tqdm(total=total, desc=desc, unit=unit)
-    old_stdout = sys.stdout
-
-    class StdoutProxy:
-        def write(self, s):
-            old_stdout.write(s)
-            if "[CV] END" in s:
-                pbar.update(1)
-
-        def flush(self):
-            old_stdout.flush()
-
-    sys.stdout = StdoutProxy()
-    try:
-        yield
-    finally:
-        sys.stdout = old_stdout
-        pbar.close()
-
-
 # ==========
 # 3) Main entry point
 # ==========
@@ -324,39 +226,14 @@ def main(config: dict[str, Any] | None = None):
     """
     Run the pipeline.
     """
-    if (
-        config is None
-    ):  # TODO: I think for simplicity whe should remove any defaults from the main and move it to default config file
-        config = {
-            "param_grid": [
-                {
-                    "clf": [KNeighborsClassifier()],
-                    "clf__n_neighbors": [3, 5],
-                    "raw_aug__enabled": [True, False],
-                    "feat_aug__enabled": [True, False],
-                    "feat_aug__std_factor": [0.01, 0.02, 0.05],
-                }
-            ]
-        }
     X, y, groups, pathologies, datasets = build_dataset(
-        excluded_pathologies=config.get(
-            "excluded_pathologies",
-            {
-                "Sängerstimme",
-                "Gesangsstimme",
-                "Sigmatismus",
-                "Balbuties",
-                "Dysodie",
-                "Poltersyndrom",
-                "Non-fluency-Syndrom",
-            },
-        ),
-        include_age=config.get("include_age", True),
-        include_sex=config.get("include_sex", True),
-        allowed_vowels=config.get("allowed_vowels", {"a"}),
-        allowed_intonations=config.get("allowed_intonations", {"n"}),
-        selected_datasets=config.get("selected_datasets", {"SVD", "VOICED"}),
-        selected_fs=config.get("selected_fs", 50000),
+        excluded_pathologies=config["excluded_pathologies"],
+        include_age=config["include_age"],
+        include_sex=config["include_sex"],
+        allowed_vowels=config["allowed_vowels"],
+        allowed_intonations=config["allowed_intonations"],
+        selected_datasets=config["selected_datasets"],
+        selected_fs=config["selected_fs"],
         drop_nan_f0=config.get("drop_nan_f0", True),
     )
 
