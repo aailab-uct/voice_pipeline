@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 from sklearn.base import clone
 import pandas as pd
-from sklearn.metrics import recall_score, confusion_matrix
+from sklearn.metrics import recall_score, confusion_matrix, roc_curve, roc_auc_score
 from imblearn.pipeline import Pipeline as ImbPipeline
 
 def per_pathology_uar(best_estimator, X, y, groups, pathologies, cv, healthy_name="healthy"):
@@ -215,6 +215,52 @@ def plot_uar_by_pathology(dfp, savepath=None, title="UAR per pathology"):
         fig.savefig(savepath, dpi=200, bbox_inches="tight")
     plt.close(fig)
 
+def plot_roc_curve(best_estimator, X, y, groups, cv, run_dir):
+    """
+    Plot mean ROC curve with std band across CV folds.
+    Saves roc_curve.png and roc_data.csv to run_dir.
+    """
+    tprs, aucs = [], []
+    mean_fpr = np.linspace(0, 1, 100)
+
+    for train, test in cv.split(X, y, groups):
+        est = clone(best_estimator)
+        est.fit(X[train], y[train])
+        y_proba = est.predict_proba(X[test])[:, 1]
+
+        fpr, tpr, _ = roc_curve(y[test], y_proba)
+        tprs.append(np.interp(mean_fpr, fpr, tpr))
+        aucs.append(roc_auc_score(y[test], y_proba))
+
+    mean_tpr = np.mean(tprs, axis=0)
+    std_tpr = np.std(tprs, axis=0)
+    mean_auc = np.mean(aucs)
+    std_auc = np.std(aucs)
+
+    fig, ax = plt.subplots(figsize=(6, 5))
+    ax.plot(mean_fpr, mean_tpr, color="#1D9E75",
+            label=f"Mean ROC (AUC = {mean_auc:.3f} ± {std_auc:.3f})", lw=2)
+    ax.fill_between(mean_fpr,
+                    np.clip(mean_tpr - std_tpr, 0, 1),
+                    np.clip(mean_tpr + std_tpr, 0, 1),
+                    alpha=0.15, color="#1D9E75", label="± 1 std")
+    ax.plot([0, 1], [0, 1], "k--", lw=1, label="Random classifier")
+
+    ax.set_xlabel("1 - Specificity (FPR)", fontsize=10)
+    ax.set_ylabel("Sensitivity (TPR)", fontsize=10)
+    ax.set_title("ROC Curve", fontsize=11)
+    ax.legend(fontsize=9)
+    ax.spines[["top", "right"]].set_visible(False)
+    fig.tight_layout()
+    fig.savefig(run_dir / "roc_curve.png", dpi=200, bbox_inches="tight")
+    plt.close(fig)
+
+    # Uložit data pro případné přeplotování
+    pd.DataFrame({
+        "fpr": mean_fpr,
+        "tpr_mean": mean_tpr,
+        "tpr_std": std_tpr,
+    }).to_csv(run_dir / "roc_data.csv", index=False)
 
 def plot_feature_histograms(pipe, X, datasets, run_dir):
     """
@@ -310,6 +356,7 @@ def run_visualizations(config, best_estimator, X, y, groups, pathologies, datase
     config : dict
         Experiment configuration. Recognized keys:
             ``plot_uar_per_pathology``  – bool, generate UAR per pathology plots (default: True)
+            ``plot_roc_curve``          – bool, generate ROC curve plot (default: True)
             ``plot_feature_histograms`` – bool, generate feature histograms (default: False)
     best_estimator : fitted sklearn estimator
         Best estimator returned by GridSearchCV.
@@ -334,9 +381,11 @@ def run_visualizations(config, best_estimator, X, y, groups, pathologies, datase
     uar_all.png                – bar plot of UAR for all pathologies
     per_pathology_UAR_weak.csv – UAR for pathologies below median UAR
     uar_weak.png               – bar plot of weak pathologies only
-    feature_histograms/        – per-feature histograms grouped by dataset (if enabled)
+    roc_curve.png              – mean ROC curve with std band across CV folds (if enabled)
+    roc_data.csv               – numerical ROC curve data for re-plotting (if enabled)
+    histograms_pre_scaling/    – per-feature histograms before scaling, grouped by dataset (if enabled)
+    histograms_post_scaling/   – per-feature histograms after scaling, grouped by dataset (if enabled)
     """
-
     if config.get("plot_uar_per_pathology", True):
         dfp = per_pathology_uar(best_estimator, X, y, groups, pathologies, cv)
 
@@ -346,6 +395,12 @@ def run_visualizations(config, best_estimator, X, y, groups, pathologies, datase
         dfp_weak = dfp[dfp["UAR"] < dfp["UAR"].median()]
         dfp_weak.to_csv(run_dir / "per_pathology_UAR_weak.csv", index=False)
         plot_uar_by_pathology(dfp_weak, run_dir / "uar_weak.png")
+
+    if config.get("plot_roc_curve", True):
+        if not hasattr(best_estimator[-1], "predict_proba"):
+            print("Classifier does not support predict_proba, skipping ROC plot.")
+        else:
+            plot_roc_curve(best_estimator, X, y, groups, cv, run_dir)
 
     if config.get("plot_feature_histograms", False):
         plot_feature_histograms(best_estimator, X, datasets, run_dir)
