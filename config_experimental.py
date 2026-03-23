@@ -13,13 +13,13 @@ config = {
     # ------------------------------------------------------------------
     # Experiment metadata
     # ------------------------------------------------------------------
-    "experiment_name": "test of functions",
+    "experiment_name": "text of waweform",
     "experiment_description": "experiment",
 
     # ------------------------------------------------------------------
     # Dataset
     # ------------------------------------------------------------------
-    "selected_datasets": {"VOICED"},       # "SVD" | "AVFAD" "VOICED" "PVQD"
+    "selected_datasets": {"SVD"},       # "SVD" | "AVFAD" "VOICED" "PVQD"
     "selected_fs": sampling_rate,
     "allowed_vowels": {"a"},
     "allowed_intonations": {"n"},
@@ -43,10 +43,10 @@ config = {
     # ------------------------------------------------------------------
     # Cross-validation & scoring
     # ------------------------------------------------------------------
-    "cv": StratifiedGroupKFold(n_splits=5),
+    "cv": StratifiedGroupKFold(n_splits=10),
     "scoring_mode": "multimetric",
     "refit_metric": "uar",
-    "n_repeats": 2,          # 0 = vypnuto, jinak počet opakování repeated CV
+    "n_repeats": 5,          # 0 = vypnuto, jinak počet opakování repeated CV
     "plot_uar_per_pathology": True,
     "plot_feature_histograms": True,
 
@@ -54,24 +54,86 @@ config = {
     # Pipeline
     # ------------------------------------------------------------------
     "pipeline": {
-        # Signal augmentation (before feature extraction)
-        "raw_aug__enabled": True,
+        # --- RawAugmenter -----------------------------------------------
+        # Modifies every existing waveform (train AND test).
+        # Shape-preserving — does not add new rows.
+        #
+        # Techniques (all default False except noise + gain):
+        #   noise         additive Gaussian white noise
+        #   gain          random amplitude scaling
+        #   polarity      flip signal sign (50 % probability)
+        #   time_crop     random crop + zero-pad to original length
+        #   pitch_shift   semitone shift, duration unchanged  [needs librosa]
+        #   time_stretch  speed change, pitch unchanged        [needs librosa]
+        #   reverb        convolve with synthetic room impulse response
+        #   codec         μ-law encode→decode (telephone codec simulation)
+        "raw_aug__enabled": False,
+        "raw_aug__sr": sampling_rate,
+        "raw_aug__noise": True,
+        "raw_aug__gain": True,
+        "raw_aug__polarity": False,
+        "raw_aug__time_crop": False,
+        "raw_aug__pitch_shift": False,      # slow — enable only when needed
+        "raw_aug__time_stretch": False,     # slow — enable only when needed
+        "raw_aug__reverb": False,
+        "raw_aug__codec": False,
         "raw_aug__noise_std": 0.005,
+        "raw_aug__gain_min": 0.8,
+        "raw_aug__gain_max": 1.2,
+        "raw_aug__crop_min_frac": 0.8,
+        "raw_aug__pitch_semitones_range": (-2.0, 2.0),
+        "raw_aug__stretch_rate_range": (0.9, 1.1),
+        "raw_aug__reverb_decay": 10.0,
         "raw_aug__random_state": 42,
 
-        # Feature extractors
-        "mfcc__enabled": True,
+        # --- WaveformSynthesizer ----------------------------------------
+        # Generates n_samples NEW waveform rows from existing ones.
+        # Runs ONLY on the train fold (imblearn BaseSampler) — synthetic
+        # audio NEVER enters the test fold or evaluation metrics.
+        # Must stay before feature extractors so synthetic waveforms pass
+        # through the same feature pipeline as real recordings.
+        #
+        # All synthesizer__* keys are directly accessible in param_grid,
+        # e.g.:  "synthesizer__n_samples": [100, 300]
+        #        "synthesizer__n_augmentations": [1, 2, 3]
+        #        "synthesizer__noise": [True, False]
+        #
+        # n_augmentations: how many techniques to randomly pick per sample.
+        #   None  = apply all enabled techniques to every sample (default)
+        #   1     = pick 1 random technique per sample
+        #   2     = pick 2 random techniques per sample   <-- RandAugment style
+        "synthesizer__enabled": True,
+        # "synthesizer__n_samples": 0,        # total new rows across all classes
+        "synthesizer__sr": sampling_rate,
+        # "synthesizer__n_augmentations": None,
+        "synthesizer__noise": True,
+        "synthesizer__gain": True,
+        "synthesizer__polarity": True,
+        "synthesizer__time_crop": True,
+        "synthesizer__pitch_shift": True,  # slow — enable only when needed
+        "synthesizer__time_stretch": True, # slow — enable only when needed
+        "synthesizer__reverb": True,
+        "synthesizer__codec": True,
+        "synthesizer__noise_std": 0.005,
+        "synthesizer__gain_min": 0.8,
+        "synthesizer__gain_max": 1.2,
+        "synthesizer__random_state": 42,
+
+        # --- Feature extractors -----------------------------------------
+        # Note: cache_disabled is set automatically by build_pipeline when
+        # raw_aug or synthesizer is enabled — no need to set it here.
+        "mfcc__enabled": False,
         "mfcc__sr": sampling_rate,
         "mfcc__n_mfcc": 20,
 
         "timedomain__enabled": True,
         "timedomain__sr": sampling_rate,
-        "timedomain__use_zcr": True,
-        "timedomain__use_entropy": True,
-        "timedomain__use_skewness": True,
-        "timedomain__use_diff_pitch": True,
+        "timedomain__use_zcr": False,
+        "timedomain__use_entropy": False,
+        "timedomain__use_skewness": False,
+        "timedomain__use_diff_pitch": False,
 
-        "zcr__enabled": True,
+        "zcr__enabled": False,
         "zcr__sr": sampling_rate,
 
         "spectral__enabled": True,
@@ -82,13 +144,13 @@ config = {
         "opensmile__feature_set": "GeMAPS",       # "GeMAPS" | "ComParE_2016"
         "opensmile__feature_level": "functionals",
 
-        # Feature augmentation (after extraction, before resampling)
-        "feat_aug__enabled": True,
+        # --- Feature augmentation (after extraction, before resampling) --
+        "feat_aug__enabled": False,
         "feat_aug__std_factor": 0.01,
         "feat_aug__random_state": 42,
 
-        # Feature selection
-        "selector__enabled": True,
+        # --- Feature selection ------------------------------------------
+        "selector__enabled": False,
         "selector__instance": SelectKBest(score_func=mutual_info_classif, k=5),
         # "selector__instance": SelectFromModel(
         #     estimator=RandomForestClassifier(n_estimators=300, random_state=42, n_jobs=-1, class_weight="balanced"),
@@ -99,12 +161,12 @@ config = {
         #     step=0.1, cv=5, scoring="balanced_accuracy", n_jobs=-1,
         # ),
 
-        # Resampling
-        "resampler": SMOTESampler(enabled=True, random_state=42, artificial_only=False, sampling_strategy="auto"),
+        # --- Resampling (train fold only) --------------------------------
+        "resampler": SMOTESampler(enabled=False, random_state=42, artificial_only=False, sampling_strategy="auto"),
         # "resampler": VAESampler(enabled=True, random_state=42, artificial_only=False, sampling_strategy="auto"),
 
-        # Classifier
-        "clf": RandomForestClassifier(random_state=42, n_jobs=-1),
+        # --- Classifier --------------------------------------------------
+        "clf__instance": RandomForestClassifier(random_state=42, n_jobs=-1),
     },
 
     # ------------------------------------------------------------------
@@ -112,12 +174,16 @@ config = {
     # ------------------------------------------------------------------
     "param_grid": [
         {
-            "clf__n_estimators": [200],
-            "clf__max_depth": [None, 10],
+            "clf__n_estimators": [200, 300, 400],
+            "clf__max_depth": [None, 10, 20],
             "clf__min_samples_split": [2, 5],
-            "clf__min_samples_leaf": [1, 3],
+            "clf__min_samples_leaf": [1, 3, 5],
             "clf__max_features": ["sqrt", 0.3],
-            "clf__class_weight": [None, "balanced"],
+            "clf__class_weight": [None],
+
+            "synthesizer__n_samples": [100, 300],
+            "synthesizer__n_augmentations": [1, 2, 3],
+            "synthesizer__noise": [True, False],
         },
     ],
 }

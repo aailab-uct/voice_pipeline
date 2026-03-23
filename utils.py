@@ -5,6 +5,19 @@ from sklearn.base import BaseEstimator, TransformerMixin
 import numpy as np
 import math
 
+class ReplaceNaN(BaseEstimator, TransformerMixin):
+    """
+    Replaces NaN, +Inf, -Inf with 0.0
+    """
+
+    def fit(self, X, y=None):
+        del X, y  # unused
+        return self
+
+    def transform(self, X):
+        X = np.asarray(X, dtype=np.float32)
+        return np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
+
 @contextmanager
 def tqdm_from_verbose(total, desc="GridSearch", unit="fit"):
     """
@@ -45,20 +58,6 @@ def tqdm_from_verbose(total, desc="GridSearch", unit="fit"):
     finally:
         sys.stdout = old_stdout
         pbar.close()
-
-
-class ReplaceNaN(BaseEstimator, TransformerMixin):
-    """
-    Replaces NaN, +Inf, -Inf with 0.0
-    """
-
-    def fit(self, X, y=None):
-        del X, y  # unused
-        return self
-
-    def transform(self, X):
-        X = np.asarray(X, dtype=np.float32)
-        return np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
 
 def _floor_power_of_2(n: int) -> int:
     """
