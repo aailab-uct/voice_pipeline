@@ -13,13 +13,13 @@ config = {
     # ------------------------------------------------------------------
     # Experiment metadata
     # ------------------------------------------------------------------
-    "experiment_name": "text of waweform",
+    "experiment_name": "test_of_new_preprocesing",
     "experiment_description": "experiment",
 
     # ------------------------------------------------------------------
     # Dataset
     # ------------------------------------------------------------------
-    "selected_datasets": {"SVD"},       # "SVD" | "AVFAD" "VOICED" "PVQD"
+    "selected_datasets": {"SVD", "AVFAD"},       # "SVD" | "AVFAD" "VOICED" "PVQD"
     "selected_fs": sampling_rate,
     "allowed_vowels": {"a"},
     "allowed_intonations": {"n"},
@@ -102,7 +102,7 @@ config = {
         #   None  = apply all enabled techniques to every sample (default)
         #   1     = pick 1 random technique per sample
         #   2     = pick 2 random techniques per sample   <-- RandAugment style
-        "synthesizer__enabled": True,
+        "synthesizer__enabled": False,
         # "synthesizer__n_samples": 0,        # total new rows across all classes
         "synthesizer__sr": sampling_rate,
         # "synthesizer__n_augmentations": None,
@@ -174,16 +174,16 @@ config = {
     # ------------------------------------------------------------------
     "param_grid": [
         {
-            "clf__n_estimators": [200, 300, 400],
-            "clf__max_depth": [None, 10, 20],
-            "clf__min_samples_split": [2, 5],
-            "clf__min_samples_leaf": [1, 3, 5],
-            "clf__max_features": ["sqrt", 0.3],
-            "clf__class_weight": [None],
+            "clf__n_estimators": [200, 400, 600],
+            "clf__max_depth": [None, 5, 10, 20],
+            "clf__min_samples_split": [2, 5, 10],
+            "clf__min_samples_leaf": [1, 2, 4],
+            "clf__max_features": ["sqrt", "log2", None],
+            "clf__class_weight": [None, "balanced"],
 
-            "synthesizer__n_samples": [100, 300],
-            "synthesizer__n_augmentations": [1, 2, 3],
-            "synthesizer__noise": [True, False],
+            # "synthesizer__n_samples": [200, 300],
+            # "synthesizer__n_augmentations": [1, 2, 3],
+            # "synthesizer__noise": [True],
         },
     ],
 }

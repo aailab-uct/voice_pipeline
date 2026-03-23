@@ -1,4 +1,6 @@
-"""Module for preprocessing raw datasets into a standardized format."""
+"""Module for preprocessing raw datasets into a standardized format.
+- normalization metrics on raw signal are finalized only on SVD and AVFAD datasets
+"""
 
 # ============================================================
 # Imports
@@ -109,6 +111,144 @@ def normalize_sex_mf(value):  # TODO: duplicate code of feature_extraction.py
 
 def f0_range_for_sex(sex_mf):
     return F0_RANGES.get(sex_mf, DEFAULT_F0_RANGE)
+
+
+# ============================================================
+# Shared signal preprocessing
+# ============================================================
+
+TRIM_TOP_DB = 20
+TARGET_RMS  = 0.1
+MIN_RMS     = 1e-6
+
+# AVFAD crop parametry
+NOISE_EST_S   = 0.1
+SILENCE_RATIO = 0.3
+MIN_PAUSE_S   = 0.15
+MIN_REP_S     = 0.5
+WINDOW_S      = 0.05
+
+
+def frame_energy_db(x: np.ndarray, frame_length: int, hop_length: int) -> np.ndarray:
+    n_frames = (len(x) - frame_length) // hop_length + 1
+    if n_frames <= 0:
+        return np.array([-100.0], dtype=np.float32)
+    return np.array([
+        10 * np.log10(np.mean(x[i * hop_length: i * hop_length + frame_length] ** 2) + 1e-10)
+        for i in range(n_frames)
+    ], dtype=np.float32)
+
+
+def subtract_noise_energy(edb: np.ndarray, fs: int, hop_length: int) -> np.ndarray:
+    n_noise = min(max(1, int(NOISE_EST_S * fs / hop_length)), len(edb))
+    noise_level_db = float(np.median(edb[:n_noise]))
+    return np.maximum(edb - noise_level_db, -100.0)
+
+
+def adaptive_silence_threshold(edb: np.ndarray) -> float:
+    noise_floor = float(np.percentile(edb, 10))
+    voiced_peak = float(np.percentile(edb, 90))
+    return noise_floor + SILENCE_RATIO * (voiced_peak - noise_floor)
+
+
+def find_first_repetition(x: np.ndarray, fs: int) -> tuple[int, list[tuple[int, int]], float]:
+    frame_length = max(4, int(WINDOW_S * fs))
+    hop_length   = max(1, frame_length // 2)
+    edb          = frame_energy_db(x, frame_length, hop_length)
+    edb_clean    = subtract_noise_energy(edb, fs, hop_length)
+    thresh       = adaptive_silence_threshold(edb_clean)
+    silent       = edb_clean < thresh
+    n_frames     = len(edb_clean)
+
+    first_voiced = next((i for i, s in enumerate(silent) if not s), None)
+    if first_voiced is None:
+        return len(x), [], thresh
+
+    pauses, in_pause, p_start = [], False, 0
+    for i in range(first_voiced, n_frames):
+        if silent[i] and not in_pause:
+            p_start, in_pause = i, True
+        elif not silent[i] and in_pause:
+            if (i - p_start) * hop_length / fs >= MIN_PAUSE_S:
+                pauses.append((p_start * hop_length, i * hop_length))
+            in_pause = False
+    if in_pause and (n_frames - p_start) * hop_length / fs >= MIN_PAUSE_S:
+        pauses.append((p_start * hop_length, len(x)))
+
+    rep_end = len(x)
+    for pause_start, _ in pauses:
+        if pause_start / fs >= MIN_REP_S:
+            rep_end = pause_start
+            break
+    return rep_end, pauses, thresh
+
+
+def trim_edges(x: np.ndarray, fs: int) -> np.ndarray:
+    fl = max(1, int(0.02 * fs))
+    hl = max(1, fl // 2)
+    edb         = frame_energy_db(x, fl, hl)
+    noise_floor = float(np.percentile(edb, 10))
+    peak        = float(np.percentile(edb, 95))
+    start_thr   = noise_floor + 0.25 * (peak - noise_floor)
+    end_thr     = noise_floor + 0.18 * (peak - noise_floor)
+    min_run     = max(1, int(0.06 * fs / hl))
+
+    def first_run(mask, n):
+        cnt = 0
+        for i, v in enumerate(mask):
+            cnt = cnt + 1 if v else 0
+            if cnt >= n: return i - n + 1
+        return None
+
+    def last_run(mask, n):
+        cnt = 0
+        for i in range(len(mask) - 1, -1, -1):
+            cnt = cnt + 1 if mask[i] else 0
+            if cnt >= n: return i + n - 1
+        return None
+
+    s = first_run(edb >= start_thr, min_run)
+    e = last_run(edb >= end_thr,   min_run)
+    if s is None or e is None:
+        return x
+    start, end = s * hl, min(len(x), e * hl + fl)
+    return x[start:end] if end > start else x
+
+
+def rms_normalize(x: np.ndarray) -> np.ndarray:
+    rms = float(np.sqrt(np.mean(x ** 2)))
+    return x * (TARGET_RMS / rms) if rms > MIN_RMS else x
+
+
+def preprocess_signal(x: np.ndarray, fs: int) -> np.ndarray:
+    """
+    Obecný preprocessing (SVD, VOICED, PVQD):
+    mono -> DC removal -> trim okrajů -> RMS normalizace.
+    """
+    x = np.asarray(x, dtype=np.float32)
+    if x.ndim == 2:
+        x = x[:, 0]
+    x = x - np.mean(x)
+    x = trim_edges(x, fs)
+    x = rms_normalize(x)
+    return x.astype(np.float32)
+
+
+def preprocess_avfad_signal(x: np.ndarray, fs: int, crop_to_one_rep: bool = True) -> np.ndarray:
+    """
+    AVFAD preprocessing:
+    mono -> DC removal -> crop 1. repetice -> trim okrajů -> RMS normalizace.
+    """
+    x = np.asarray(x, dtype=np.float32)
+    if x.ndim == 2:
+        x = x[:, 0]
+    x = x - np.mean(x)
+    if crop_to_one_rep:
+        rep_end, _, _ = find_first_repetition(x, fs)
+        x = x[:rep_end]
+    x = trim_edges(x, fs)
+    x = rms_normalize(x)
+    return x.astype(np.float32)
 
 
 # ============================================================
@@ -301,9 +441,6 @@ def process_svd_file(nsp_path: Path, metadata, writer, record_idx):
     fs = int(fs)
     x = np.asarray(x)
 
-    if x.ndim > 1:
-        x = x.mean(axis=1)
-
     if np.issubdtype(x.dtype, np.integer):
         x = x.astype(np.float32) / float(np.iinfo(x.dtype).max)
     else:
@@ -312,7 +449,7 @@ def process_svd_file(nsp_path: Path, metadata, writer, record_idx):
         if m > 1.0:
             x /= m
 
-    x, _ = librosa.effects.trim(x, top_db=15, frame_length=256 * fs // 50000, hop_length=65 * fs // 50000)
+    x = preprocess_signal(x, fs)
 
     sf.write(OUT_DIR / wav_name, x, fs)
 
@@ -477,19 +614,9 @@ def process_avfad_file(wav_path: Path, src_row: dict, vowel: str, writer, record
         return record_idx
 
     x, fs = sf.read(wav_path, dtype=np.float32)
+    fs = int(fs)
 
-    if isinstance(x, np.ndarray) and x.ndim == 2:
-        x = x[:, 0]
-
-    # odstranění ticha na okrajích
-    x, _ = librosa.effects.trim(x, top_db=15)
-
-    # vyříznutí první repetice samohlásky
-    if AVFAD_CROP_TO_ONE_REP:
-        intervals = librosa.effects.split(x, top_db=20)
-        if len(intervals):
-            a, b = intervals[0]
-            x = x[a:b]
+    x = preprocess_avfad_signal(x, fs, crop_to_one_rep=AVFAD_CROP_TO_ONE_REP)
 
     sex_mf = normalize_sex_mf(src_row.get("sex"))
     fmin, fmax = f0_range_for_sex(sex_mf)
@@ -506,7 +633,7 @@ def process_avfad_file(wav_path: Path, src_row: dict, vowel: str, writer, record
     record_id = f"{record_idx:04d}"
     wav_name = f"record_{record_id}.wav"
 
-    sf.write(OUT_DIR / wav_name, x, int(fs))
+    sf.write(OUT_DIR / wav_name, x, fs)
 
     p = normalize_pathology(str(src_row.get("pathology")) if src_row.get("pathology") is not None else None)
 

@@ -362,6 +362,13 @@ class WaveformSynthesizer(BaseSampler):
 
     _sampling_type = "over-sampling"
 
+    # Override _validate_params to skip sklearn's constraint validation.
+    # Our parameters have complex types (tuples, None | int) that don't map
+    # cleanly to sklearn's constraint system — we validate implicitly via
+    # Python types and numpy inside _augment_waveform.
+    def _validate_params(self):
+        pass
+
     def __init__(
         self,
         enabled: bool = False,
@@ -407,7 +414,13 @@ class WaveformSynthesizer(BaseSampler):
         self.n_augmentations = n_augmentations
         self.random_state = random_state
 
-    # ImbPipeline calls this from fit_resample() — only on the train fold.
+    def fit_resample(self, X: np.ndarray, y: np.ndarray, **params) -> tuple[np.ndarray, np.ndarray]:
+        # Override to skip sklearn's check_array validation — X is an object
+        # array containing variable-length waveforms which check_array cannot
+        # handle.  We go straight to _fit_resample, bypassing _check_X_y.
+        return self._fit_resample(X, y)
+
+    # ImbPipeline calls fit_resample() above — only on the train fold.
     def _fit_resample(self, X: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         if not self.enabled or self.n_samples <= 0:
             return X, y
