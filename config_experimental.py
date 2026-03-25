@@ -13,7 +13,7 @@ config = {
     # ------------------------------------------------------------------
     # Experiment metadata
     # ------------------------------------------------------------------
-    "experiment_name": "test_of_new_preprocesing",
+    "experiment_name": "SVD_AVFAD_preprocesd_test",
     "experiment_description": "experiment",
 
     # ------------------------------------------------------------------
