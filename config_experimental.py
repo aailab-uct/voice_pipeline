@@ -13,13 +13,13 @@ config = {
     # ------------------------------------------------------------------
     # Experiment metadata
     # ------------------------------------------------------------------
-    "experiment_name": "SVD_AVFAD_preprocesd_test",
+    "experiment_name": "SMOTE_PAPER_balanced",
     "experiment_description": "experiment",
 
     # ------------------------------------------------------------------
     # Dataset
     # ------------------------------------------------------------------
-    "selected_datasets": {"SVD", "AVFAD"},       # "SVD" | "AVFAD" "VOICED" "PVQD"
+    "selected_datasets": {"SVD"},       # "SVD" | "AVFAD" "VOICED" "PVQD"
     "selected_fs": sampling_rate,
     "allowed_vowels": {"a"},
     "allowed_intonations": {"n"},
@@ -46,7 +46,7 @@ config = {
     "cv": StratifiedGroupKFold(n_splits=10),
     "scoring_mode": "multimetric",
     "refit_metric": "uar",
-    "n_repeats": 5,          # 0 = vypnuto, jinak počet opakování repeated CV
+    "n_repeats": 1000,          # 0 = vypnuto, jinak počet opakování repeated CV
     "plot_uar_per_pathology": True,
     "plot_feature_histograms": True,
 
@@ -174,12 +174,15 @@ config = {
     # ------------------------------------------------------------------
     "param_grid": [
         {
-            "clf__n_estimators": [200, 400, 600],
-            "clf__max_depth": [None, 5, 10, 20],
+            "clf__n_estimators": [100, 200, 400, 500, 600],
+            "clf__max_depth": [None, 5, 10, 20, 30],
             "clf__min_samples_split": [2, 5, 10],
-            "clf__min_samples_leaf": [1, 2, 4],
-            "clf__max_features": ["sqrt", "log2", None],
-            "clf__class_weight": [None, "balanced"],
+            "clf__min_samples_leaf": [1, 2, 3, 4, 5, 10],
+            "clf__max_features": ["sqrt", "log2", None, 0.3, 0.5],
+            "clf__max_samples": [0.6, 0.8, 1.0],
+            "clf__bootstrap": [True, False],
+            "clf__criterion": ["gini", "entropy"],
+            "clf__class_weight": ["balanced"],
 
             # "synthesizer__n_samples": [200, 300],
             # "synthesizer__n_augmentations": [1, 2, 3],

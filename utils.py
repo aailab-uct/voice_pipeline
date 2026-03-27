@@ -1,6 +1,7 @@
 from tqdm import tqdm
 import sys
 from contextlib import contextmanager
+from pathlib import Path
 from sklearn.base import BaseEstimator, TransformerMixin
 import numpy as np
 import math
@@ -83,3 +84,74 @@ def _floor_power_of_2(n: int) -> int:
     512
     """
     return 2 ** int(math.floor(math.log2(max(n, 1))))
+
+
+def log_cv_class_distribution(
+    y: np.ndarray,
+    groups: np.ndarray,
+    cv,
+    output_path: Path,
+    label_names: dict | None = None,
+) -> None:
+    """
+    Save per-fold class distribution (healthy / pathological) to a text file.
+
+    For each CV fold the function writes how many healthy and pathological
+    samples fall into the train and test split, together with per-split
+    totals and the overall dataset summary.
+
+    Parameters
+    ----------
+    y : np.ndarray
+        Binary label array (0 = healthy, 1 = pathological).
+    groups : np.ndarray
+        Speaker / group identifiers forwarded to the CV splitter.
+    cv :
+        Any sklearn CV object with a ``split(X, y, groups)`` method,
+        e.g. ``StratifiedGroupKFold``.
+    output_path : Path
+        File path where the report is written (created / overwritten).
+    label_names : dict, optional
+        Mapping ``{encoded_value: display_name}``.
+        Defaults to ``{0: "healthy", 1: "pathological"}``.
+
+    Example
+    -------
+    >>> log_cv_class_distribution(y, groups, cv, run_dir / "cv_distribution.txt")
+    """
+    if label_names is None:
+        label_names = {0: "healthy", 1: "pathological"}
+
+    healthy_label = next(k for k, v in label_names.items() if v == "healthy")
+    patho_label   = next(k for k, v in label_names.items() if v == "pathological")
+
+    lines = []
+    header = f"{'Fold':<6} {'Split':<8} {'Healthy':>10} {'Pathological':>14} {'Total':>8} {'Ratio H:P':>12}"
+    lines.append(header)
+    lines.append("-" * len(header))
+
+    # dummy X — cv.split only needs y and groups
+    X_dummy = np.zeros((len(y), 1))
+
+    for fold, (tr, te) in enumerate(cv.split(X_dummy, y, groups)):
+        for split_name, idx in [("train", tr), ("test", te)]:
+            n_healthy = int((y[idx] == healthy_label).sum())
+            n_patho   = int((y[idx] == patho_label).sum())
+            total     = len(idx)
+            ratio     = f"{n_healthy}:{n_patho}"
+            lines.append(
+                f"{fold:<6} {split_name:<8} {n_healthy:>10} {n_patho:>14} {total:>8} {ratio:>12}"
+            )
+
+    # overall summary
+    lines.append("-" * len(header))
+    n_healthy_total = int((y == healthy_label).sum())
+    n_patho_total   = int((y == patho_label).sum())
+    lines.append(
+        f"{'ALL':<6} {'total':<8} {n_healthy_total:>10} {n_patho_total:>14}"
+        f" {len(y):>8} {n_healthy_total}:{n_patho_total:>1}"
+    )
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text("\n".join(lines) + "\n")

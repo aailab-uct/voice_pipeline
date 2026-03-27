@@ -39,7 +39,7 @@ from feature_augmenters import FeatureAugmenter
 from oversampling import SMOTESampler
 from dataset_filtration import build_dataset
 from sklearn.ensemble import RandomForestClassifier
-from utils import (tqdm_from_verbose, ReplaceNaN)
+from utils import (tqdm_from_verbose, ReplaceNaN, log_cv_class_distribution)
 
 import warnings
 
@@ -344,6 +344,8 @@ def main(config: dict[str, Any] | None = None):
         experiment_description=config.get("experiment_description"),
         config=config,
     )
+
+    log_cv_class_distribution(y, groups, cv, run_dir / "cv_distribution.txt")
 
     run_visualizations(config, grid_search.best_estimator_, X, y, groups, pathologies, datasets, cv, run_dir)
 

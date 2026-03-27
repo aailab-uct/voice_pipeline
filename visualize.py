@@ -8,166 +8,114 @@ import pandas as pd
 from sklearn.metrics import recall_score, confusion_matrix, roc_curve, roc_auc_score
 from imblearn.pipeline import Pipeline as ImbPipeline
 
-def per_pathology_uar(best_estimator, X, y, groups, pathologies, cv, healthy_name="healthy"):
-    """
-    Evaluate classifier UAR separately for each pathology vs. healthy controls.
 
-    For each fold, the estimator is re-fitted on the training split and used to
-    predict the test split. Predictions are then aggregated across all folds and
-    evaluated per pathology: each pathology is scored in a one-vs-healthy subset
-    (samples belonging to that pathology + all healthy samples).
+def per_pathology_recall(y_true, y_pred, pathologies, healthy_name="healthy", min_samples=3):
+    """
+    Compute recall (sensitivity) per pathology vs. healthy controls.
 
     Parameters
     ----------
-    best_estimator : fitted sklearn estimator
-        Estimator to evaluate. It is cloned and re-fitted for each fold,
-        so the original object is not modified.
-    X : np.ndarray
-        Full feature matrix.
-    y : np.ndarray
-        Binary target labels (1 = pathological, 0 = healthy).
-    groups : np.ndarray
-        Group labels for cross-validation splitting (e.g. speaker IDs).
+    y_true : np.ndarray
+        True binary labels (1 = pathological, 0 = healthy).
+    y_pred : np.ndarray
+        Predicted binary labels from the classifier.
     pathologies : np.ndarray
         Pathology name for each sample (e.g. "Dysphonia", "healthy").
-    cv : cross-validator
-        Cross-validation splitter (e.g. StratifiedGroupKFold).
     healthy_name : str, optional
         Label used to identify healthy samples in ``pathologies``.
         Comparison is case-insensitive. Default: "healthy".
+    min_samples : int, optional
+        Minimum number of pathology samples required to include a pathology
+        in the results. Default: 3.
 
     Returns
     -------
     pd.DataFrame
-        One row per pathology, sorted by UAR descending, with columns:
-        pathology, UAR, TP, FN, FP, TN, n_pathology, n_healthy.
+        One row per pathology, sorted by Recall descending, with columns:
+        pathology, Recall, TP, FN, FP, TN, n_pathology, n_healthy.
     """
-    # --- Step 1: collect predictions across all CV folds ---
-    # We need out-of-fold predictions for every sample, so we iterate over
-    # all folds, refit the estimator on the training split, and collect
-    # predictions on the held-out test split.
-    y_true_all, y_pred_all, p_all = [], [], []
-
-    for train, test in cv.split(X, y, groups):
-        # Clone ensures each fold gets a fresh unfitted estimator —
-        # without this, fit() would modify the shared best_estimator object.
-        estimator = clone(best_estimator)
-        estimator.fit(X[train], y[train])
-        yp = estimator.predict(X[test])
-
-        y_true_all.append(y[test])
-        y_pred_all.append(yp)
-        p_all.append(pathologies[test])
-
-    # Concatenate fold results into single flat arrays for easy indexing
-    y_true_all = np.concatenate(y_true_all)
-    y_pred_all = np.concatenate(y_pred_all)
-    p_all = np.concatenate(p_all)
-
-    # --- Step 2: compute UAR for each pathology vs. healthy ---
-    # For each unique pathology we build a binary one-vs-healthy subset and
-    # compute UAR (= mean per-class recall = balanced accuracy for binary case).
-    # Healthy samples are always included as the negative class.
     rows = []
-    for p in np.unique(p_all):
-        # Skip the healthy class itself — it is the reference, not a target
-        if p.lower() == healthy_name:
+    for p in np.unique(pathologies):
+        if p.lower() == healthy_name.lower():
             continue
 
-        # Build a boolean mask selecting only:
-        #   - samples with this specific pathology (positive class)
-        #   - all healthy samples (negative class)
-        # This gives a binary classification subset for this pathology.
-        m = (p_all == p) | (np.char.lower(p_all) == healthy_name)
+        # One-vs-healthy subset
+        m = (pathologies == p) | (np.char.lower(pathologies.astype(str)) == healthy_name.lower())
 
-        yt = y_true_all[m]
-        yp = y_pred_all[m]
+        n_pathology = int((pathologies[m] == p).sum())
+        if n_pathology < min_samples:
+            continue
 
-        # Compute confusion matrix entries using sklearn to avoid manual errors.
-        # Rows = true class, columns = predicted class: [[TN, FP], [FN, TP]]
+        yt = y_true[m]
+        yp = y_pred[m]
+
         cm = confusion_matrix(yt, yp, labels=[0, 1])
         tn, fp, fn, tp = cm.ravel()
         tn, fp, fn, tp = int(tn), int(fp), int(fn), int(tp)
 
-        # UAR = unweighted average recall = mean of per-class recall scores.
-        # Equivalent to balanced_accuracy_score but computed explicitly here
-        # so we can also log individual recall values if needed in the future.
-        r0, r1 = recall_score(yt, yp, labels=[0, 1], average=None, zero_division=0)
-        uar = 0.5 * (r0 + r1)
+        recall = recall_score(yt, yp, zero_division=0)
+        n_healthy = int((np.char.lower(pathologies[m].astype(str)) == healthy_name.lower()).sum())
 
-        # Count how many samples of this pathology and how many healthy samples
-        # are present in the subset (useful for interpreting UAR in context)
-        n_pathology = int((p_all[m] == p).sum())
-        n_healthy = int((np.char.lower(p_all[m]) == healthy_name).sum())
+        rows.append((p, recall, tp, fn, fp, tn, n_pathology, n_healthy))
 
-        rows.append((p, uar, tp, fn, fp, tn, n_pathology, n_healthy))
+    df = pd.DataFrame(rows, columns=["pathology", "Recall", "TP", "FN", "FP", "TN", "n_pathology", "n_healthy"])
+    return df.sort_values("Recall", ascending=False)
 
-    df = pd.DataFrame(rows, columns=["pathology", "UAR", "TP", "FN", "FP", "TN", "n_pathology", "n_healthy"])
-    return df.sort_values("UAR", ascending=False)
 
-def _uar_color(uar: float) -> str:
+def _recall_color(recall: float) -> str:
     """
-    Map a UAR value to a color for bar chart visualization.
+    Map a Recall value to a color for bar chart visualization.
 
     Color thresholds:
         >= 0.75  green  (good performance)
         >= 0.60  blue   (acceptable performance)
         >= 0.50  amber  (poor performance)
         <  0.50  red    (below chance)
-
-    Parameters
-    ----------
-    uar : float
-        UAR value in range [0, 1].
-
-    Returns
-    -------
-    str
-        Hex color string.
     """
-    if uar >= 0.75:
+    if recall >= 0.75:
         return "#1D9E75"
-    if uar >= 0.60:
+    if recall >= 0.60:
         return "#378ADD"
-    if uar >= 0.50:
+    if recall >= 0.50:
         return "#EF9F27"
     return "#E24B4A"
 
-def plot_uar_by_pathology(dfp, savepath=None, title="UAR per pathology"):
-    """
-    Plot a horizontal bar chart of UAR scores per pathology.
 
-    Bars are color-coded by UAR threshold (green/blue/amber/red).
-    A dashed vertical line marks the chance level (UAR = 0.5).
-    Each bar is annotated with the UAR value and sample count.
+def plot_recall_by_pathology(df, savepath=None, title="Recall per pathology"):
+    """
+    Plot a horizontal bar chart of Recall scores per pathology.
+
+    Bars are color-coded by Recall threshold (green/blue/amber/red).
+    A dashed vertical line marks the chance level (Recall = 0.5).
+    Each bar is annotated with the Recall value and sample count.
 
     Parameters
     ----------
-    df_pathology : pd.DataFrame
-        Output of ``per_pathology_uar()``. Must contain columns:
-        ``pathology``, ``UAR``, ``n_pathology``.
+    df : pd.DataFrame
+        Output of ``per_pathology_recall()``. Must contain columns:
+        ``pathology``, ``Recall``, ``n_pathology``.
     savepath : Path or str, optional
         If provided, the figure is saved to this path at 200 dpi.
     title : str, optional
-        Plot title. Default: "UAR per pathology".
+        Plot title. Default: "Recall per pathology".
     """
-    d = dfp.sort_values("UAR", ascending=True).reset_index(drop=True)  # what is dfp? bad naming imo
+    d = df.sort_values("Recall", ascending=True).reset_index(drop=True)
     n = len(d)
 
     fig, ax = plt.subplots(figsize=(7, max(2.5, n * 0.28)))
     fig.patch.set_facecolor("white")
     ax.set_facecolor("white")
 
-    colors = [_uar_color(v) for v in d["UAR"]]  # colors of what?
-    ax.barh(np.arange(n), d["UAR"].values, color=colors, height=0.65)
+    colors = [_recall_color(v) for v in d["Recall"]]
+    ax.barh(np.arange(n), d["Recall"].values, color=colors, height=0.65)
 
     ax.axvline(0.5, color="#B4B2A9", linewidth=0.8, linestyle="--", zorder=0)
 
-    for i, (uar, n_pat) in enumerate(zip(d["UAR"], d["n_pathology"])):
+    for i, (recall, n_pat) in enumerate(zip(d["Recall"], d["n_pathology"])):
         ax.text(
-            x = min(0.97, uar + 0.012),
-            y = i,
-            s = f"{uar:.2f}  n={int(n_pat)}",
+            x=min(0.97, recall + 0.012),
+            y=i,
+            s=f"{recall:.2f}  n={int(n_pat)}",
             va="center",
             ha="left",
             fontsize=7.5,
@@ -177,7 +125,7 @@ def plot_uar_by_pathology(dfp, savepath=None, title="UAR per pathology"):
     ax.set_yticks(np.arange(n))
     ax.set_yticklabels(d["pathology"].values, fontsize=8, color="#2C2C2A")
     ax.set_xlim(0, 1.18)
-    ax.set_xlabel("UAR", fontsize=9, color="#5F5E5A")
+    ax.set_xlabel("Recall", fontsize=9, color="#5F5E5A")
     ax.set_title(title, fontsize=10, fontweight="normal", color="#2C2C2A", pad=8)
 
     ax.spines[["top", "right", "left"]].set_visible(False)
@@ -187,18 +135,18 @@ def plot_uar_by_pathology(dfp, savepath=None, title="UAR per pathology"):
     ax.xaxis.grid(True, color="#F1EFE8", zorder=0)
     ax.set_axisbelow(True)
 
-    legend_items = [  # LOL vyber barev s takovouhle presnosti xD
+    legend_items = [
         ("#1D9E75", "≥ 0.75"),
         ("#378ADD", "≥ 0.60"),
         ("#EF9F27", "≥ 0.50"),
         ("#E24B4A", "< 0.50"),
     ]
     handles = [plt.Rectangle((0, 0), 1, 1, color=c) for c, _ in legend_items]
-    labels = [l for _, l in legend_items]
+    labels = [label for _, label in legend_items]
     ax.legend(
         handles,
         labels,
-        title="UAR",
+        title="Recall",
         title_fontsize=7,
         fontsize=7,
         loc="lower right",
@@ -214,6 +162,7 @@ def plot_uar_by_pathology(dfp, savepath=None, title="UAR per pathology"):
     if savepath:
         fig.savefig(savepath, dpi=200, bbox_inches="tight")
     plt.close(fig)
+
 
 def plot_roc_curve(best_estimator, X, y, groups, cv, run_dir):
     """
@@ -255,12 +204,12 @@ def plot_roc_curve(best_estimator, X, y, groups, cv, run_dir):
     fig.savefig(run_dir / "roc_curve.png", dpi=200, bbox_inches="tight")
     plt.close(fig)
 
-    # Uložit data pro případné přeplotování
     pd.DataFrame({
         "fpr": mean_fpr,
         "tpr_mean": mean_tpr,
         "tpr_std": std_tpr,
     }).to_csv(run_dir / "roc_data.csv", index=False)
+
 
 def plot_feature_histograms(pipe, X, datasets, run_dir):
     """
@@ -283,12 +232,6 @@ def plot_feature_histograms(pipe, X, datasets, run_dir):
     hist_dir_pre.mkdir(exist_ok=True)
     hist_dir_post.mkdir(exist_ok=True)
 
-    # Split pipeline steps into two groups:
-    #   pre_steps  : everything before the scaler (raw feature space)
-    #   post_steps : scaler itself
-    # Steps after the scaler (selector, feat_aug, resampler, clf) are excluded
-    # because they either require y (resampler), change feature count (selector),
-    # or are not transformers (clf).
     STEPS_TO_EXCLUDE = {"selector", "feat_aug", "resampler", "clf"}
     pre_steps, post_steps = [], []
     scaler_seen = False
@@ -302,9 +245,6 @@ def plot_feature_histograms(pipe, X, datasets, run_dir):
         if name == "scaler":
             scaler_seen = True
 
-    # Use ImbPipeline for consistency with the rest of the project.
-    # transform() does not trigger resampling (only fit_transform/fit does),
-    # so it is safe to call without y here.
     pre_pipe = ImbPipeline(pre_steps)
     post_pipe = ImbPipeline(pre_steps + post_steps)
 
@@ -313,8 +253,6 @@ def plot_feature_histograms(pipe, X, datasets, run_dir):
 
     dataset_labels = np.unique(datasets)
 
-    # Build a color map with exactly as many colors as there are datasets.
-    # Using a continuous colormap avoids the 10-color limit of tab10.
     cmap = plt.colormaps.get_cmap("tab10")
     colors = [cmap(i / max(len(dataset_labels) - 1, 1)) for i in range(len(dataset_labels))]
 
@@ -348,53 +286,56 @@ def run_visualizations(config, best_estimator, X, y, groups, pathologies, datase
     """
     Generate and save visualizations after a completed grid search run.
 
-    Called from main.py at the end of a run. Which plots are generated
-    is controlled by config switches — unrecognized keys are silently ignored.
-
     Parameters
     ----------
     config : dict
         Experiment configuration. Recognized keys:
-            ``plot_uar_per_pathology``  – bool, generate UAR per pathology plots (default: True)
-            ``plot_roc_curve``          – bool, generate ROC curve plot (default: True)
-            ``plot_feature_histograms`` – bool, generate feature histograms (default: False)
+            ``plot_recall_per_pathology`` – bool, generate Recall per pathology plots (default: True)
+            ``plot_roc_curve``            – bool, generate ROC curve plot (default: True)
+            ``plot_feature_histograms``   – bool, generate feature histograms (default: False)
+            ``min_pathology_samples``     – int, min samples per pathology to include (default: 3)
     best_estimator : fitted sklearn estimator
-        Best estimator returned by GridSearchCV.
+        Best estimator returned by GridSearchCV. Used directly to predict the full dataset.
     X : np.ndarray
-        Full feature matrix (unfitted).
+        Full feature matrix.
     y : np.ndarray
         Target labels.
     groups : np.ndarray
         Group labels for cross-validation splitting.
     pathologies : np.ndarray
-        Pathology label for each sample, used for per-pathology UAR breakdown.
+        Pathology label for each sample.
     datasets : np.ndarray
         Dataset source label for each sample, used for feature histogram grouping.
     cv : cross-validator
-        Cross-validation splitter (e.g. StratifiedGroupKFold).
+        Cross-validation splitter — used only for ROC curve and feature histograms.
     run_dir : Path
         Directory where output files are saved.
 
     Output files
     ------------
-    per_pathology_UAR_all.csv  – UAR for all pathologies
-    uar_all.png                – bar plot of UAR for all pathologies
-    per_pathology_UAR_weak.csv – UAR for pathologies below median UAR
-    uar_weak.png               – bar plot of weak pathologies only
-    roc_curve.png              – mean ROC curve with std band across CV folds (if enabled)
-    roc_data.csv               – numerical ROC curve data for re-plotting (if enabled)
-    histograms_pre_scaling/    – per-feature histograms before scaling, grouped by dataset (if enabled)
-    histograms_post_scaling/   – per-feature histograms after scaling, grouped by dataset (if enabled)
+    per_pathology_recall_all.csv  – Recall for all pathologies (with >= min_samples)
+    recall_all.png                – bar plot of Recall for all pathologies
+    per_pathology_recall_weak.csv – Recall for pathologies below median Recall
+    recall_weak.png               – bar plot of weak pathologies only
+    roc_curve.png                 – mean ROC curve with std band across CV folds (if enabled)
+    roc_data.csv                  – numerical ROC curve data for re-plotting (if enabled)
+    histograms_pre_scaling/       – per-feature histograms before scaling (if enabled)
+    histograms_post_scaling/      – per-feature histograms after scaling (if enabled)
     """
-    if config.get("plot_uar_per_pathology", True):
-        dfp = per_pathology_uar(best_estimator, X, y, groups, pathologies, cv)
+    if config.get("plot_recall_per_pathology", True):
+        min_samples = config.get("min_pathology_samples", 3)
 
-        dfp.to_csv(run_dir / "per_pathology_UAR_all.csv", index=False)
-        plot_uar_by_pathology(dfp, run_dir / "uar_all.png")
+        # Classify the full dataset in one pass with the fitted estimator
+        y_pred = best_estimator.predict(X)
 
-        dfp_weak = dfp[dfp["UAR"] < dfp["UAR"].median()]
-        dfp_weak.to_csv(run_dir / "per_pathology_UAR_weak.csv", index=False)
-        plot_uar_by_pathology(dfp_weak, run_dir / "uar_weak.png")
+        df = per_pathology_recall(y, y_pred, pathologies, min_samples=min_samples)
+
+        df.to_csv(run_dir / "per_pathology_recall_all.csv", index=False)
+        plot_recall_by_pathology(df, run_dir / "recall_all.png")
+
+        df_weak = df[df["Recall"] < df["Recall"].median()]
+        df_weak.to_csv(run_dir / "per_pathology_recall_weak.csv", index=False)
+        plot_recall_by_pathology(df_weak, run_dir / "recall_weak.png", title="Recall per pathology (weak)")
 
     if config.get("plot_roc_curve", True):
         if not hasattr(best_estimator[-1], "predict_proba"):
