@@ -13,7 +13,7 @@ config = {
     # ------------------------------------------------------------------
     # Experiment metadata
     # ------------------------------------------------------------------
-    "experiment_name": "SMOTE_PAPER_balanced",
+    "experiment_name": "Dataset_origin_1",
     "experiment_description": "experiment",
 
     # ------------------------------------------------------------------
@@ -34,7 +34,7 @@ config = {
     "cv": StratifiedGroupKFold(n_splits=10),
     "scoring_mode": "multimetric",
     "refit_metric": "uar",
-    "n_repeats": 1000,          # 0 = vypnuto, jinak počet opakování repeated CV
+    "n_repeats": 10,          # 0 = vypnuto, jinak počet opakování repeated CV
     "plot_uar_per_pathology": True,
     "plot_feature_histograms": True,
 
@@ -162,10 +162,10 @@ config = {
     # ------------------------------------------------------------------
     "param_grid": [
         {
-            "clf__n_estimators": [100, 200, 400, 500, 600],
-            "clf__max_depth": [None, 5, 10, 20, 30],
+            "clf__n_estimators": [100, 200, 400],
+            "clf__max_depth": [None, 5, 10, 20],
             "clf__min_samples_split": [2, 5, 10],
-            "clf__min_samples_leaf": [1, 2, 3, 4, 5, 10],
+            "clf__min_samples_leaf": [1, 2, 3, 4],
             "clf__max_features": ["sqrt", "log2", None, 0.3, 0.5],
             "clf__max_samples": [0.6, 0.8, 1.0],
             "clf__bootstrap": [True],
