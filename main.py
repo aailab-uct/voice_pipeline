@@ -253,11 +253,14 @@ def repeated_cv_evaluation(
             est = clone(best_estimator)
             est.fit(X[tr], y[tr])
             yp = est.predict(X[te])
-            y_proba = est.predict_proba(X[te])[:, 1]
+            y_proba = est.predict_proba(X[te])
 
             uar = balanced_accuracy_score(y[te], yp)
             acc = accuracy_score(y[te], yp)
-            auc = roc_auc_score(y[te], y_proba)
+            if y_proba.shape[1] == 2:
+                auc = roc_auc_score(y[te], y_proba[:, 1])
+            else:
+                auc = roc_auc_score(y[te], y_proba, multi_class="ovr", average="macro")
             rows.append((repeat, fold, uar, acc, auc))
 
     return pd.DataFrame(rows, columns=["repeat", "fold", "UAR", "accuracy", "AUC"])
@@ -270,6 +273,7 @@ def main(config: dict[str, Any] | None = None):
     """
     Run the pipeline.
     """
+    label_mode = config.get("label_mode", "dataset")
     X, y, groups, pathologies, datasets = build_dataset(
         excluded_pathologies=config["excluded_pathologies"],
         include_age=config["include_age"],
@@ -279,6 +283,7 @@ def main(config: dict[str, Any] | None = None):
         selected_datasets=config["selected_datasets"],
         selected_fs=config["selected_fs"],
         drop_nan_f0=config.get("drop_nan_f0", True),
+        label_mode=label_mode,
     )
 
     # 1.1) Encode groups to number
@@ -296,15 +301,23 @@ def main(config: dict[str, Any] | None = None):
     scoring_mode = config.get("scoring_mode", "multimetric")
 
     if scoring_mode == "multimetric":
-        scoring = {
-            "uar": make_scorer(balanced_accuracy_score),
-            "accuracy": make_scorer(accuracy_score),
-            "TP": make_scorer(lambda yt, yp: confusion_matrix(yt, yp)[1, 1]),
-            "TN": make_scorer(lambda yt, yp: confusion_matrix(yt, yp)[0, 0]),
-            "FP": make_scorer(lambda yt, yp: confusion_matrix(yt, yp)[0, 1]),
-            "FN": make_scorer(lambda yt, yp: confusion_matrix(yt, yp)[1, 0]),
-            "roc_auc": make_scorer(roc_auc_score, response_method="predict_proba"),
-        }
+        if label_mode == "dataset":
+            scoring = {
+                "uar": make_scorer(balanced_accuracy_score),
+                "accuracy": make_scorer(accuracy_score),
+                "roc_auc": make_scorer(roc_auc_score, response_method="predict_proba",
+                                        multi_class="ovr", average="macro"),
+            }
+        else:
+            scoring = {
+                "uar": make_scorer(balanced_accuracy_score),
+                "accuracy": make_scorer(accuracy_score),
+                "TP": make_scorer(lambda yt, yp: confusion_matrix(yt, yp)[1, 1]),
+                "TN": make_scorer(lambda yt, yp: confusion_matrix(yt, yp)[0, 0]),
+                "FP": make_scorer(lambda yt, yp: confusion_matrix(yt, yp)[0, 1]),
+                "FN": make_scorer(lambda yt, yp: confusion_matrix(yt, yp)[1, 0]),
+                "roc_auc": make_scorer(roc_auc_score, response_method="predict_proba"),
+            }
         refit = config.get("refit_metric", False)
     elif scoring_mode == "accuracy_only":
         scoring = "accuracy"

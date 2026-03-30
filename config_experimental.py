@@ -19,26 +19,14 @@ config = {
     # ------------------------------------------------------------------
     # Dataset
     # ------------------------------------------------------------------
-    "selected_datasets": {"SVD"},       # "SVD" | "AVFAD" "VOICED" "PVQD"
+    "label_mode": "dataset",              # "dataset" (multiclass) | "pathology" (binary)
+    "selected_datasets": {"SVD", "VOICED", "AVFAD", "PVQD", "VOPAD"},  # None = all
     "selected_fs": sampling_rate,
     "allowed_vowels": {"a"},
     "allowed_intonations": {"n"},
     "include_age": True,
     "include_sex": True,
-    "excluded_pathologies": {
-        "Sängerstimme",
-        "Poltersyndrom",
-        "Stuttering",
-        "Singing voice",
-        "Singing voice ; Vocal fold nodules",
-        "Dysphonia ; Mutatio",
-        "Dysodia",
-        "Sigmatism",
-        "Non-fluency-Syndrom",
-        "Mutatio",
-        "Stuttering ; Laryngitis",
-        "Dysodia ; Hyperfunctional dysphonia"
-    },
+    "excluded_pathologies": set(),      # prázdné – při label_mode="dataset" se nepoužívá
 
     # ------------------------------------------------------------------
     # Cross-validation & scoring
@@ -180,7 +168,7 @@ config = {
             "clf__min_samples_leaf": [1, 2, 3, 4, 5, 10],
             "clf__max_features": ["sqrt", "log2", None, 0.3, 0.5],
             "clf__max_samples": [0.6, 0.8, 1.0],
-            "clf__bootstrap": [True, False],
+            "clf__bootstrap": [True],
             "clf__criterion": ["gini", "entropy"],
             "clf__class_weight": ["balanced"],
 

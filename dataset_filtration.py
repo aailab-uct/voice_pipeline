@@ -32,13 +32,17 @@ def build_dataset(
     selected_datasets: set[str] | None = None,
     selected_fs: int | None = None,
     drop_nan_f0: bool = True,
+    label_mode: str = "dataset",
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """TODO: wrong docstring format
     Build X, y, groups, pathologies and datasets for sklearn pipeline.
 
-    Labeling:
-        healthy       -> 0
-        pathological  -> 1
+    Labeling (controlled by label_mode):
+        "pathology"  – binary: healthy -> 0, pathological -> 1  (original behaviour)
+        "dataset"    – multiclass: y = integer-encoded dataset name
+                       (e.g. SVD -> 0, VOICED -> 1, AVFAD -> 2, …)
+                       Encoding is alphabetical and stored in y_dataset_classes_
+                       returned as the 6th element of the tuple.
 
     Parameters
     ----------
@@ -55,13 +59,16 @@ def build_dataset(
         Allowed datasets (for example. {"SVD", "VOICED"}). None
     selected_fs : int or None
         It will resample sampling frequency to int or if None, leave original.
+    label_mode : str
+        "dataset" (default) or "pathology".
 
     Returns
     -------
     X : np.ndarray (dtype=object)
         All elements: [signal, (age), (sex)]
     y : np.ndarray
-        Binary label (0 = healthy, 1 = pathological)
+        Multiclass dataset label (label_mode="dataset") or
+        binary pathology label (label_mode="pathology").
     groups : np.ndarray
         talkerID (for GroupKFold).
     pathologies : np.ndarray
@@ -128,20 +135,25 @@ def build_dataset(
                     print(f"Warning: unknown sex '{row["talkersex"]}' for record {row["id"]}")
             features.append(sex)
 
-        is_healthy = row["pathologies"].lower() == "healthy"
-        label = 0 if is_healthy else 1
-
         X.append(features)
-        y.append(label)
+        y.append(row["dataset"] if label_mode == "dataset" else (0 if row["pathologies"].lower() == "healthy" else 1))
         groups.append(row["talkerid"])
         pathologies_out.append(pathology)
         datasets_out.append(row["dataset"])
 
     X = np.array(X, dtype=object)
-    y = np.array(y, dtype=int)
     groups = np.array(groups, dtype=str)
     pathologies_out = np.array(pathologies_out, dtype=str)
     datasets_out = np.array(datasets_out, dtype=str)
+
+    if label_mode == "dataset":
+        # Encode dataset names to integers (alphabetical order)
+        dataset_classes = np.array(sorted(set(y)))
+        class_to_int = {c: i for i, c in enumerate(dataset_classes)}
+        y = np.array([class_to_int[v] for v in y], dtype=int)
+        print("Dataset label encoding:", {c: i for i, c in enumerate(dataset_classes)})
+    else:
+        y = np.array(y, dtype=int)
 
     return X, y, groups, pathologies_out, datasets_out
 

@@ -658,6 +658,129 @@ def process_avfad_file(wav_path: Path, src_row: dict, vowel: str, writer, record
     return record_idx + 1
 
 
+
+
+# ============================================================
+# ====================== VOPAD DATASET =======================
+# ============================================================
+
+VOPAD_ROOT = Path("data") / "VOPAD"
+VOPAD_METADATA_CSV = VOPAD_ROOT / "db_info.csv"
+
+# Prefix format: a1_, a2_, e1_, i1_, o1_, u1_, ...
+# První znak je samohláska, číslo je index opakování.
+VOPAD_PREFIX_RE = re.compile(r"^(?P<vowel>[aeiou])(?P<rep>\d+)_")
+
+
+def load_vopad_metadata(csv_path: Path) -> list[dict]:
+    """
+    Načte VOPAD metadata z db_info.csv.
+    Vrací list dictů, jeden per řádek (= session).
+    """
+    import pandas as pd
+    df = pd.read_csv(csv_path, dtype=str)
+    return df.to_dict(orient="records")
+
+
+def vopad_missing_vowels(row: dict) -> set[str]:
+    """
+    Parsuje sloupec missing_vowels (např. "a,e,i,") do setu znaků samohlásek.
+    """
+    raw = row.get("missing_vowels") or ""
+    if not isinstance(raw, str) or raw.strip().lower() in {"", "nan", "none"}:
+        return set()
+    return {v.strip() for v in raw.split(",") if v.strip()}
+
+
+def process_vopad_session(session_row: dict, writer, record_idx: int) -> int:
+    """
+    Zpracuje všechny WAV soubory samohlásek pro jednu VOPAD session.
+
+    Pojmenování souborů:
+        {vowel}{rep}_{sessionid}.wav
+    Např.:
+        a1_ZJ90F-CZ-Z-92437_2024-03-14_213038.wav
+        e2_ZJ90F-CZ-Z-92437_2024-03-14_213038.wav
+
+    Jeden řádek CSV je zapsán pro každý nalezený soubor (vowel, opakování).
+    Přeskočí:
+      - mluvčí pod MIN_AGE
+      - samohlásky uvedené v missing_vowels
+      - sessions s database_administrator_note
+    """
+    sessionid = str(session_row.get("sessionid", "") or "").strip()
+    if not sessionid:
+        return record_idx
+
+    if not is_adult(session_row.get("talkerage")):
+        return record_idx
+
+    admin_note = str(session_row.get("database_administrator_note") or "").strip().lower()
+    if admin_note and admin_note not in {"nan", "none", ""}:
+        print(f"VOPAD skipped (admin note): {sessionid!r} — {admin_note}")
+        return record_idx
+
+    missing = vopad_missing_vowels(session_row)
+
+    sex_mf = normalize_sex_mf(session_row.get("talkersex"))
+    fmin, fmax = f0_range_for_sex(sex_mf)
+
+    wav_files = sorted(VOPAD_ROOT.rglob(f"*_{sessionid}.wav"))
+    if not wav_files:
+        return record_idx
+
+    for wav_path in wav_files:
+        m = VOPAD_PREFIX_RE.match(wav_path.name)
+        if not m:
+            continue
+
+        vowel = m.group("vowel")
+        if vowel in missing:
+            continue
+
+        try:
+            x, fs = sf.read(wav_path, dtype=np.float32)
+        except Exception as e:
+            print(f"VOPAD skipped (read error): {wav_path.name} — {e}")
+            continue
+
+        fs = int(fs)
+        x = preprocess_signal(x, fs)
+
+        try:
+            sound = parselmouth.Sound(x, sampling_frequency=fs)
+            pitch = call(sound, "To Pitch", 0.0, fmin, fmax)
+            mean_f0 = call(pitch, "Get mean", 0, 0, "Hertz")
+        except Exception as e:
+            print(f"VOPAD skipped (F0 error): {wav_path.name} — {e}")
+            continue
+
+        record_id = f"{record_idx:04d}"
+        wav_name = f"record_{record_id}.wav"
+        sf.write(OUT_DIR / wav_name, x, fs)
+
+        pathology_raw = str(session_row.get("pathologies") or "").strip()
+        pathology = pathology_raw if pathology_raw and pathology_raw.lower() not in {"nan", "none"} else ""
+
+        row = {
+            "id": record_id,
+            "sessionid": sessionid,
+            "talkerid": f"VOPAD_{str(session_row.get('talkerid', '')).strip()}",
+            "talkersex": sex_mf,
+            "age": session_row.get("talkerage"),
+            "pathologies": pathology,
+            "file": wav_path.name,
+            "vowel": vowel,
+            "intonation": "n",
+            "dataset": "VOPAD",
+            "nan_f0": np.isnan(mean_f0),
+        }
+
+        writer.writerow(row)
+        record_idx += 1
+
+    return record_idx
+
 # ============================================================
 # Public API
 # ============================================================
@@ -696,6 +819,11 @@ def build_dataset():
             for p in PVQD_ROOT.rglob("*.wav"):
                 if pvqd_is_a_vowel_file(p.name, pid):
                     idx = process_pvqd_file(p, r, writer, idx)
+
+        # VOPAD
+        vopad_meta = load_vopad_metadata(VOPAD_METADATA_CSV)
+        for r in tqdm(vopad_meta, desc="Processing VOPAD"):
+            idx = process_vopad_session(r, writer, idx)
 
 
 if __name__ == "__main__":

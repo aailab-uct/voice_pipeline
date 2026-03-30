@@ -1,347 +1,830 @@
-"""Visualization functions for experiment results."""
+"""Module for preprocessing raw datasets into a standardized format.
+- normalization metrics on raw signal are finalized only on SVD and AVFAD datasets
+"""
 
-import numpy as np
-import matplotlib.pyplot as plt
+# ============================================================
+# Imports
+# ============================================================
+
+import csv
+import re
 from pathlib import Path
-from sklearn.base import clone
-import pandas as pd
-from sklearn.metrics import recall_score, confusion_matrix, roc_curve, roc_auc_score
-from imblearn.pipeline import Pipeline as ImbPipeline
+
+import nspfile
+import soundfile as sf
+import librosa
+import wfdb
+from tqdm import tqdm
+import numpy as np
+import parselmouth
+from parselmouth.praat import call
+import openpyxl
 
 
-def per_pathology_recall(y_true, y_pred, pathologies, healthy_name="healthy", min_samples=3):
+# ============================================================
+# Output
+# ============================================================
+
+OUT_DIR = Path("dataset")
+OUT_DIR.mkdir(exist_ok=True)
+
+OUT_CSV = OUT_DIR / "metadata.csv"
+
+
+# ============================================================
+# Target CSV schema (FIXED)
+# ============================================================
+
+CSV_COLUMNS = [
+    "id",
+    "sessionid",
+    "talkerid",
+    "talkersex",
+    "age",
+    "pathologies",
+    "file",
+    "vowel",
+    "intonation",
+    "dataset",
+    "nan_f0",
+]
+
+
+# ============================================================
+# Filtering
+# ============================================================
+
+MIN_AGE = 18
+
+
+def is_adult(age) -> bool:
     """
-    Compute recall (sensitivity) per pathology vs. healthy controls.
-
-    Parameters
-    ----------
-    y_true : np.ndarray
-        True binary labels (1 = pathological, 0 = healthy).
-    y_pred : np.ndarray
-        Predicted binary labels from the classifier.
-    pathologies : np.ndarray
-        Pathology name for each sample (e.g. "Dysphonia", "healthy").
-    healthy_name : str, optional
-        Label used to identify healthy samples in ``pathologies``.
-        Comparison is case-insensitive. Default: "healthy".
-    min_samples : int, optional
-        Minimum number of pathology samples required to include a pathology
-        in the results. Default: 3.
-
-    Returns
-    -------
-    pd.DataFrame
-        One row per pathology, sorted by Recall descending, with columns:
-        pathology, Recall, TP, FN, FP, TN, n_pathology, n_healthy.
+    Return True if age is numeric and >= MIN_AGE. Otherwise False.
+    Handles None, strings, floats safely.
     """
-    rows = []
-    for p in np.unique(pathologies):
-        if p.lower() == healthy_name.lower():
+    if age is None:
+        # TODO: We should probably handle this in one safer place, as otherwise we might miss errors in other steps
+        return False
+    try:
+        return float(age) >= MIN_AGE
+    except Exception:# TODO: dtto
+        return False
+
+
+# ============================================================
+# F0 configuration
+# ============================================================
+
+F0_RANGES = {
+    "m": (75.0, 300.0),
+    "f": (100.0, 600.0),
+}
+
+DEFAULT_F0_RANGE = (60.0, 250.0)  # TODO: Why? this makes litlle sense if m starts at 75 and f at 100.
+
+
+def normalize_sex_mf(value):  # TODO: duplicate code of feature_extraction.py
+    """
+    Normalize sex/gender to 'm' or 'f'.
+    Returns None if unknown.
+    """
+    if value is None:
+        return None
+
+    s = str(value).strip().lower()
+
+    if s in {"m", "male", "man"}:
+        return "m"
+
+    # SVD uses 'w' for women
+    if s in {"f", "female", "woman", "w"}:
+        return "f"
+
+    if s == "0":
+        return "m"
+
+    if s == "1":
+        return "f"
+
+    return None
+
+
+def f0_range_for_sex(sex_mf):
+    return F0_RANGES.get(sex_mf, DEFAULT_F0_RANGE)
+
+
+# ============================================================
+# Shared signal preprocessing
+# ============================================================
+
+TRIM_TOP_DB = 20
+TARGET_RMS  = 0.1
+MIN_RMS     = 1e-6
+
+# AVFAD crop parametry
+NOISE_EST_S   = 0.1
+SILENCE_RATIO = 0.3
+MIN_PAUSE_S   = 0.15
+MIN_REP_S     = 0.5
+WINDOW_S      = 0.05
+
+
+def frame_energy_db(x: np.ndarray, frame_length: int, hop_length: int) -> np.ndarray:
+    n_frames = (len(x) - frame_length) // hop_length + 1
+    if n_frames <= 0:
+        return np.array([-100.0], dtype=np.float32)
+    return np.array([
+        10 * np.log10(np.mean(x[i * hop_length: i * hop_length + frame_length] ** 2) + 1e-10)
+        for i in range(n_frames)
+    ], dtype=np.float32)
+
+
+def subtract_noise_energy(edb: np.ndarray, fs: int, hop_length: int) -> np.ndarray:
+    n_noise = min(max(1, int(NOISE_EST_S * fs / hop_length)), len(edb))
+    noise_level_db = float(np.median(edb[:n_noise]))
+    return np.maximum(edb - noise_level_db, -100.0)
+
+
+def adaptive_silence_threshold(edb: np.ndarray) -> float:
+    noise_floor = float(np.percentile(edb, 10))
+    voiced_peak = float(np.percentile(edb, 90))
+    return noise_floor + SILENCE_RATIO * (voiced_peak - noise_floor)
+
+
+def find_first_repetition(x: np.ndarray, fs: int) -> tuple[int, list[tuple[int, int]], float]:
+    frame_length = max(4, int(WINDOW_S * fs))
+    hop_length   = max(1, frame_length // 2)
+    edb          = frame_energy_db(x, frame_length, hop_length)
+    edb_clean    = subtract_noise_energy(edb, fs, hop_length)
+    thresh       = adaptive_silence_threshold(edb_clean)
+    silent       = edb_clean < thresh
+    n_frames     = len(edb_clean)
+
+    first_voiced = next((i for i, s in enumerate(silent) if not s), None)
+    if first_voiced is None:
+        return len(x), [], thresh
+
+    pauses, in_pause, p_start = [], False, 0
+    for i in range(first_voiced, n_frames):
+        if silent[i] and not in_pause:
+            p_start, in_pause = i, True
+        elif not silent[i] and in_pause:
+            if (i - p_start) * hop_length / fs >= MIN_PAUSE_S:
+                pauses.append((p_start * hop_length, i * hop_length))
+            in_pause = False
+    if in_pause and (n_frames - p_start) * hop_length / fs >= MIN_PAUSE_S:
+        pauses.append((p_start * hop_length, len(x)))
+
+    rep_end = len(x)
+    for pause_start, _ in pauses:
+        if pause_start / fs >= MIN_REP_S:
+            rep_end = pause_start
+            break
+    return rep_end, pauses, thresh
+
+
+def trim_edges(x: np.ndarray, fs: int) -> np.ndarray:
+    fl = max(1, int(0.02 * fs))
+    hl = max(1, fl // 2)
+    edb         = frame_energy_db(x, fl, hl)
+    noise_floor = float(np.percentile(edb, 10))
+    peak        = float(np.percentile(edb, 95))
+    start_thr   = noise_floor + 0.25 * (peak - noise_floor)
+    end_thr     = noise_floor + 0.18 * (peak - noise_floor)
+    min_run     = max(1, int(0.06 * fs / hl))
+
+    def first_run(mask, n):
+        cnt = 0
+        for i, v in enumerate(mask):
+            cnt = cnt + 1 if v else 0
+            if cnt >= n: return i - n + 1
+        return None
+
+    def last_run(mask, n):
+        cnt = 0
+        for i in range(len(mask) - 1, -1, -1):
+            cnt = cnt + 1 if mask[i] else 0
+            if cnt >= n: return i + n - 1
+        return None
+
+    s = first_run(edb >= start_thr, min_run)
+    e = last_run(edb >= end_thr,   min_run)
+    if s is None or e is None:
+        return x
+    start, end = s * hl, min(len(x), e * hl + fl)
+    return x[start:end] if end > start else x
+
+
+def rms_normalize(x: np.ndarray) -> np.ndarray:
+    rms = float(np.sqrt(np.mean(x ** 2)))
+    return x * (TARGET_RMS / rms) if rms > MIN_RMS else x
+
+
+def preprocess_signal(x: np.ndarray, fs: int) -> np.ndarray:
+    """
+    Obecný preprocessing (SVD, VOICED, PVQD):
+    mono -> DC removal -> trim okrajů -> RMS normalizace.
+    """
+    x = np.asarray(x, dtype=np.float32)
+    if x.ndim == 2:
+        x = x[:, 0]
+    x = x - np.mean(x)
+    x = trim_edges(x, fs)
+    x = rms_normalize(x)
+    return x.astype(np.float32)
+
+
+def preprocess_avfad_signal(x: np.ndarray, fs: int, crop_to_one_rep: bool = True) -> np.ndarray:
+    """
+    AVFAD preprocessing:
+    mono -> DC removal -> crop 1. repetice -> trim okrajů -> RMS normalizace.
+    """
+    x = np.asarray(x, dtype=np.float32)
+    if x.ndim == 2:
+        x = x[:, 0]
+    x = x - np.mean(x)
+    if crop_to_one_rep:
+        rep_end, _, _ = find_first_repetition(x, fs)
+        x = x[:rep_end]
+    x = trim_edges(x, fs)
+    x = rms_normalize(x)
+    return x.astype(np.float32)
+
+
+# ============================================================
+# ======================= PVQD DATASET =======================
+# ============================================================
+
+PVQD_ROOT = Path("data") / "PVQD"
+PVQD_DEMOGRAPHICS_XLSX = PVQD_ROOT / "Demographics.xlsx"
+
+
+def load_pvqd_metadata(xlsx_path: Path):
+    df = openpyxl.load_workbook(xlsx_path, data_only=True).active
+    rows = list(df.iter_rows(values_only=True))
+    header = [str(h).strip() if h is not None else "" for h in rows[0]]
+    col = {h: i for i, h in enumerate(header)}
+
+    out = []
+    for r in rows[1:]:
+        pid = r[
+            col.get("Participant ID", col.get("Participant ID "))
+        ]  # TODO: doopravdy je tohle nutne? nestaci ten strip nahore?
+        if pid is None:
+            continue
+        out.append(
+            {
+                "participant_id": str(pid).strip(),
+                "sex": r[col.get("Gender")],
+                "age": r[col.get("Age")],
+                "diagnosis": r[col.get("Diagnosis", col.get("Diagnosis "))],  # TODO: dtto
+            }
+        )
+    return out
+
+
+def normalize_pvqd_pathology(value):
+    if value is None:
+        return "healthy"
+    pathology_string = str(value).lower().strip()
+    if not pathology_string:
+        return "healthy"
+
+
+    # PVQD sheet uses N for normal, and sometimes Y as "has pathology"
+    if pathology_string in {"n", "normal"}:
+        return "healthy"
+    if pathology_string == "y":
+        return "pathology"
+
+    # keep original text but normalize whitespace around commas
+    pathology_string = re.sub(r"\s*,\s*", ", ", pathology_string.strip())
+    pathology_string = re.sub(r"\s+", " ", pathology_string)
+    return pathology_string
+
+
+def pvqd_is_a_vowel_file(fname: str, participant_id: str) -> bool:
+    """
+    Heuristic: filename must contain participant_id and an 'a' token.
+    Works for common patterns like:
+      BL01_a.wav, BL01-a.wav, BL01_vowel_a.wav, BL01_A.wav
+    """
+    # TODO: ta db je doopravdy tak spatne oanotovana ze je treba tolik kroku?
+    f = fname.lower()
+    pid = participant_id.lower()
+
+    if pid not in f:
+        return False
+
+    base = Path(f).stem
+
+    # accept token a separated by _ or -
+    if re.search(r"(^|[_-])a([_-]|$)", base):
+        return True
+
+    # accept explicit 'vowel a' like patterns
+    if "vowel" in base and re.search(r"vowel[_-]?a", base):
+        return True
+
+    return False
+
+
+def process_pvqd_file(wav_path: Path, src_row: dict, writer, record_idx: int) -> int:
+
+    if not is_adult(src_row.get("age")):
+        return record_idx
+
+    x, fs = sf.read(wav_path, dtype=np.float32)
+
+    if isinstance(x, np.ndarray) and x.ndim == 2:
+        x = x[:, 0]
+
+    x, _ = librosa.effects.trim(x, top_db=15)
+
+    sex_mf = normalize_sex_mf(src_row.get("sex"))
+    fmin, fmax = f0_range_for_sex(sex_mf)
+
+    sound = parselmouth.Sound(x, sampling_frequency=int(fs))
+    pitch = call(sound, "To Pitch", 0.0, fmin, fmax)
+    mean_f0 = call(pitch, "Get mean", 0, 0, "Hertz")
+
+    record_id = f"{record_idx:04d}"
+    wav_name = f"record_{record_id}.wav"
+    sf.write(OUT_DIR / wav_name, x, int(fs))
+
+    row = {
+        "id": record_id,
+        "sessionid": None,
+        "talkerid": f"PVQD_{src_row.get("participant_id")}",
+        "talkersex": sex_mf,
+        "age": src_row.get("age"),
+        "pathologies": normalize_pvqd_pathology(src_row.get("diagnosis")),
+        "file": wav_path.name,
+        "vowel": "a",
+        "intonation": "n",
+        "dataset": "PVQD",
+        "nan_f0": np.isnan(mean_f0),
+    }
+
+    writer.writerow(row)
+    return record_idx + 1
+
+
+# ============================================================
+# ======================= SVD DATASET ========================
+# ============================================================
+
+SESSION_ID_TO_DELETE = {
+    1573,
+    87,
+    1372,
+    2088,
+    2077,
+    2070,
+    2081,
+    2426,
+    2428,
+    2448,
+    2450,
+    2451,
+    2457,
+    713,
+}
+
+SVD_ROOT = Path("data", "SVD")
+SVD_METADATA_CSV = SVD_ROOT / "svd_information.csv"
+SVD_PATTERN = re.compile(r"(?P<id>\d+)-(?P<vowel>[a-z]+)_(?P<intonation>[a-z]+)\.nsp")
+
+
+def load_svd_metadata(csv_path: Path):
+    with open(csv_path, newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        return list(reader)
+
+
+def normalize_pathology(value):
+    if value is None:
+        return "healthy"
+    value = value.strip()
+    return value if value else "healthy"
+
+
+def process_svd_file(nsp_path: Path, metadata, writer, record_idx):
+
+    m = SVD_PATTERN.fullmatch(nsp_path.name)
+    if not m:
+        return record_idx
+
+    parts = m.groupdict()
+    speaker_id = parts["id"]
+
+    src = next((m for m in metadata if m.get("talkerid") == speaker_id), None)
+    if not src:
+        return record_idx
+
+    if not is_adult(src.get("talkerage")):
+        return record_idx
+
+    session_id = src.get("sessionid")
+    if session_id is not None and int(session_id) in SESSION_ID_TO_DELETE:
+        return record_idx
+
+    record_id = f"{record_idx:04d}"
+    wav_name = f"record_{record_id}.wav"
+
+    try:
+        fs, x = nspfile.read(nsp_path)
+    except RuntimeError as e:
+        print(f"Warning: failed to read {nsp_path}: {e}")
+        return record_idx
+
+    fs = int(fs)
+    x = np.asarray(x)
+
+    if np.issubdtype(x.dtype, np.integer):
+        x = x.astype(np.float32) / float(np.iinfo(x.dtype).max)
+    else:
+        x = x.astype(np.float32)
+        m = float(np.max(np.abs(x))) if x.size else 0.0
+        if m > 1.0:
+            x /= m
+
+    x = preprocess_signal(x, fs)
+
+    sf.write(OUT_DIR / wav_name, x, fs)
+
+    sex_mf = normalize_sex_mf(src.get("talkersex"))
+    fmin, fmax = f0_range_for_sex(sex_mf)
+
+    sound = parselmouth.Sound(x, sampling_frequency=fs)
+    pitch = call(sound, "To Pitch", 0.0, fmin, fmax)
+    mean_f0 = call(pitch, "Get mean", 0, 0, "Hertz")
+
+    row = {
+        "id": record_id,
+        "sessionid": src.get("sessionid"),
+        "talkerid": f"SVD_{src.get("talkerid")}",
+        "talkersex": sex_mf,
+        "age": src.get("talkerage"),
+        "pathologies": normalize_pathology(src.get("pathologies")),
+        "file": nsp_path.name,
+        "vowel": parts["vowel"],
+        "intonation": parts["intonation"],
+        "dataset": "SVD",
+        "nan_f0": np.isnan(mean_f0),
+    }
+
+    writer.writerow(row)
+    return record_idx + 1
+
+
+# ============================================================
+# ====================== VOICED DATASET ======================
+# ============================================================
+
+VOICED_ROOT = Path("data") / "VOICED"
+
+
+def extract_number(text):
+    m = re.search(r"\d+", text)
+    return m.group() if m else None
+
+
+def parse_voiced_info(info_path: Path):
+
+    meta = {}
+    with open(info_path, encoding="utf-8") as f:
+        for line in f:
+            if ":" in line:
+                k, v = line.split(":", 1)
+                meta[k.strip().lower()] = v.strip()
+    return meta
+
+
+def process_voiced_file(dat_path: Path, writer, record_idx):
+
+    base = dat_path.stem
+    info_path = dat_path.with_name(f"{base}-info.txt")
+
+    if not info_path.exists():
+        return record_idx
+
+    info = parse_voiced_info(info_path)
+
+    if not is_adult(info.get("age")):
+        return record_idx
+
+    record = wfdb.rdrecord(str(dat_path.with_suffix("")))
+
+    x = record.p_signal.squeeze()
+    fs = int(record.fs)
+    x = np.array(x, dtype=np.float32)
+
+    x, _ = librosa.effects.trim(x, top_db=15, frame_length=256 * fs // 50000, hop_length=65 * fs // 50000)
+
+    sex_mf = normalize_sex_mf(info.get("gender"))
+    fmin, fmax = f0_range_for_sex(sex_mf)
+
+    sound = parselmouth.Sound(x, sampling_frequency=fs)
+    pitch = call(sound, "To Pitch", 0.0, fmin, fmax)
+
+    pitch_data = pitch.selected_array["frequency"]
+    pitch_data[pitch_data == 0] = np.nan
+
+    mean_f0 = call(pitch, "Get mean", 0, 0, "Hertz")
+
+    record_id = f"{record_idx:04d}"
+    wav_name = f"record_{record_id}.wav"
+
+    sf.write(OUT_DIR / wav_name, x, fs)
+
+    row = {
+        "id": record_id,
+        "sessionid": None,
+        "talkerid": f"VOICED_{extract_number(base)}",
+        "talkersex": sex_mf,
+        "age": info.get("age"),
+        "pathologies": info.get("diagnosis"),
+        "file": dat_path.name,
+        "vowel": "a",
+        "intonation": "n",
+        "dataset": "VOICED",
+        "nan_f0": np.isnan(mean_f0),
+    }
+
+    writer.writerow(row)
+    return record_idx + 1
+
+
+# ============================================================
+# ======================= AVFAD DATASET =======================
+# ============================================================
+
+AVFAD_ROOT = Path("data") / "AVFAD"
+AVFAD_XLSX = AVFAD_ROOT / "AVFAD_01_00_00.xlsx"
+AVFAD_SHEET = "AVFAD"
+
+AVFAD_FILES = {
+    "001": "i",
+    "002": "a",
+    "003": "u",
+}
+
+AVFAD_CROP_TO_ONE_REP = True
+
+
+def load_avfad_metadata(xlsx_path: Path):
+
+    wb = openpyxl.load_workbook(xlsx_path, data_only=True)
+    ws = wb[AVFAD_SHEET]
+
+    rows = ws.iter_rows(values_only=True)
+    header = next(rows)
+
+    col = {str(h).strip(): i for i, h in enumerate(header) if h is not None}
+
+    out = []
+    for r in rows:
+
+        file_id = r[col["File ID"]]
+        if file_id is None:
             continue
 
-        # One-vs-healthy subset
-        m = (pathologies == p) | (np.char.lower(pathologies.astype(str)) == healthy_name.lower())
-
-        n_pathology = int((pathologies[m] == p).sum())
-        if n_pathology < min_samples:
-            continue
-
-        yt = y_true[m]
-        yp = y_pred[m]
-
-        cm = confusion_matrix(yt, yp, labels=[0, 1])
-        tn, fp, fn, tp = cm.ravel()
-        tn, fp, fn, tp = int(tn), int(fp), int(fn), int(tp)
-
-        recall = recall_score(yt, yp, zero_division=0)
-        n_healthy = int((np.char.lower(pathologies[m].astype(str)) == healthy_name.lower()).sum())
-
-        rows.append((p, recall, tp, fn, fp, tn, n_pathology, n_healthy))
-
-    df = pd.DataFrame(rows, columns=["pathology", "Recall", "TP", "FN", "FP", "TN", "n_pathology", "n_healthy"])
-    return df.sort_values("Recall", ascending=False)
-
-
-def _recall_color(recall: float) -> str:
-    """
-    Map a Recall value to a color for bar chart visualization.
-
-    Color thresholds:
-        >= 0.75  green  (good performance)
-        >= 0.60  blue   (acceptable performance)
-        >= 0.50  amber  (poor performance)
-        <  0.50  red    (below chance)
-    """
-    if recall >= 0.75:
-        return "#1D9E75"
-    if recall >= 0.60:
-        return "#378ADD"
-    if recall >= 0.50:
-        return "#EF9F27"
-    return "#E24B4A"
-
-
-def plot_recall_by_pathology(df, savepath=None, title="Recall per pathology"):
-    """
-    Plot a horizontal bar chart of Recall scores per pathology.
-
-    Bars are color-coded by Recall threshold (green/blue/amber/red).
-    A dashed vertical line marks the chance level (Recall = 0.5).
-    Each bar is annotated with the Recall value and sample count.
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Output of ``per_pathology_recall()``. Must contain columns:
-        ``pathology``, ``Recall``, ``n_pathology``.
-    savepath : Path or str, optional
-        If provided, the figure is saved to this path at 200 dpi.
-    title : str, optional
-        Plot title. Default: "Recall per pathology".
-    """
-    d = df.sort_values("Recall", ascending=True).reset_index(drop=True)
-    n = len(d)
-
-    fig, ax = plt.subplots(figsize=(7, max(2.5, n * 0.28)))
-    fig.patch.set_facecolor("white")
-    ax.set_facecolor("white")
-
-    colors = [_recall_color(v) for v in d["Recall"]]
-    ax.barh(np.arange(n), d["Recall"].values, color=colors, height=0.65)
-
-    ax.axvline(0.5, color="#B4B2A9", linewidth=0.8, linestyle="--", zorder=0)
-
-    for i, (recall, n_pat) in enumerate(zip(d["Recall"], d["n_pathology"])):
-        ax.text(
-            x=min(0.97, recall + 0.012),
-            y=i,
-            s=f"{recall:.2f}  n={int(n_pat)}",
-            va="center",
-            ha="left",
-            fontsize=7.5,
-            color="#5F5E5A",
+        out.append(
+            {
+                "file_id": str(file_id).strip(),
+                "age": r[col["Age"]],
+                "sex": r[col["Sex"]],
+                "pathology": r[col["CMVD-I Dimension 1 (word system)"]],
+            }
         )
 
-    ax.set_yticks(np.arange(n))
-    ax.set_yticklabels(d["pathology"].values, fontsize=8, color="#2C2C2A")
-    ax.set_xlim(0, 1.18)
-    ax.set_xlabel("Recall", fontsize=9, color="#5F5E5A")
-    ax.set_title(title, fontsize=10, fontweight="normal", color="#2C2C2A", pad=8)
-
-    ax.spines[["top", "right", "left"]].set_visible(False)
-    ax.spines["bottom"].set_color("#D3D1C7")
-    ax.tick_params(axis="x", colors="#888780", labelsize=8)
-    ax.tick_params(axis="y", length=0, pad=3)
-    ax.xaxis.grid(True, color="#F1EFE8", zorder=0)
-    ax.set_axisbelow(True)
-
-    legend_items = [
-        ("#1D9E75", "≥ 0.75"),
-        ("#378ADD", "≥ 0.60"),
-        ("#EF9F27", "≥ 0.50"),
-        ("#E24B4A", "< 0.50"),
-    ]
-    handles = [plt.Rectangle((0, 0), 1, 1, color=c) for c, _ in legend_items]
-    labels = [label for _, label in legend_items]
-    ax.legend(
-        handles,
-        labels,
-        title="Recall",
-        title_fontsize=7,
-        fontsize=7,
-        loc="lower right",
-        framealpha=0.9,
-        edgecolor="#D3D1C7",
-        handlelength=1,
-        handleheight=0.8,
-        borderpad=0.5,
-        labelspacing=0.3,
-    )
-
-    fig.tight_layout(pad=0.5)
-    if savepath:
-        fig.savefig(savepath, dpi=200, bbox_inches="tight")
-    plt.close(fig)
+    return out
 
 
-def plot_roc_curve(best_estimator, X, y, groups, cv, run_dir):
+def find_avfad_wav(file_id: str, suffix: str) -> Path | None:
+
+    name = f"{file_id}{suffix}.wav"
+    return next(AVFAD_ROOT.rglob(name), None)
+
+
+def process_avfad_file(wav_path: Path, src_row: dict, vowel: str, writer, record_idx: int) -> int:
+
+    if not is_adult(src_row.get("age")):
+        return record_idx
+
+    x, fs = sf.read(wav_path, dtype=np.float32)
+    fs = int(fs)
+
+    x = preprocess_avfad_signal(x, fs, crop_to_one_rep=AVFAD_CROP_TO_ONE_REP)
+
+    sex_mf = normalize_sex_mf(src_row.get("sex"))
+    fmin, fmax = f0_range_for_sex(sex_mf)
+
+    # bezpečný výpočet F0 (skip problematických souborů)
+    try:
+        sound = parselmouth.Sound(x, sampling_frequency=int(fs))
+        pitch = call(sound, "To Pitch", 0.0, fmin, fmax)
+        mean_f0 = call(pitch, "Get mean", 0, 0, "Hertz")
+    except Exception as e: # TODO: unused e
+        print("AVFAD skipped:", src_row.get("file_id"), wav_path.name, "fs=", fs, "len=", len(x) / fs)
+        return record_idx
+
+    record_id = f"{record_idx:04d}"
+    wav_name = f"record_{record_id}.wav"
+
+    sf.write(OUT_DIR / wav_name, x, fs)
+
+    p = normalize_pathology(str(src_row.get("pathology")) if src_row.get("pathology") is not None else None)
+
+    if p.strip().lower() == "normal":
+        p = "healthy"
+
+    row = {
+        "id": record_id,
+        "sessionid": None,
+        "talkerid": f"AVFAD_{src_row.get("file_id")}",
+        "talkersex": sex_mf,
+        "age": src_row.get("age"),
+        "pathologies": p,
+        "file": wav_path.name,
+        "vowel": vowel,
+        "intonation": "n",
+        "dataset": "AVFAD",
+        "nan_f0": np.isnan(mean_f0),
+    }
+
+    writer.writerow(row)
+    return record_idx + 1
+
+
+
+
+# ============================================================
+# ====================== VOPAD DATASET =======================
+# ============================================================
+
+VOPAD_ROOT = Path("data") / "VOPAD"
+VOPAD_METADATA_CSV = VOPAD_ROOT / "db_info.csv"
+
+# Prefix format: a1_, a2_, e1_, i1_, o1_, u1_, ...
+# První znak je samohláska, číslo je index opakování.
+VOPAD_PREFIX_RE = re.compile(r"^(?P<vowel>[aeiou])(?P<rep>\d+)_")
+
+
+def load_vopad_metadata(csv_path: Path) -> list[dict]:
     """
-    Plot mean ROC curve with std band across CV folds.
-    Saves roc_curve.png and roc_data.csv to run_dir.
+    Načte VOPAD metadata z db_info.csv.
+    Vrací list dictů, jeden per řádek (= session).
     """
-    tprs, aucs = [], []
-    mean_fpr = np.linspace(0, 1, 100)
-
-    for train, test in cv.split(X, y, groups):
-        est = clone(best_estimator)
-        est.fit(X[train], y[train])
-        y_proba = est.predict_proba(X[test])[:, 1]
-
-        fpr, tpr, _ = roc_curve(y[test], y_proba)
-        tprs.append(np.interp(mean_fpr, fpr, tpr))
-        aucs.append(roc_auc_score(y[test], y_proba))
-
-    mean_tpr = np.mean(tprs, axis=0)
-    std_tpr = np.std(tprs, axis=0)
-    mean_auc = np.mean(aucs)
-    std_auc = np.std(aucs)
-
-    fig, ax = plt.subplots(figsize=(6, 5))
-    ax.plot(mean_fpr, mean_tpr, color="#1D9E75",
-            label=f"Mean ROC (AUC = {mean_auc:.3f} ± {std_auc:.3f})", lw=2)
-    ax.fill_between(mean_fpr,
-                    np.clip(mean_tpr - std_tpr, 0, 1),
-                    np.clip(mean_tpr + std_tpr, 0, 1),
-                    alpha=0.15, color="#1D9E75", label="± 1 std")
-    ax.plot([0, 1], [0, 1], "k--", lw=1, label="Random classifier")
-
-    ax.set_xlabel("1 - Specificity (FPR)", fontsize=10)
-    ax.set_ylabel("Sensitivity (TPR)", fontsize=10)
-    ax.set_title("ROC Curve", fontsize=11)
-    ax.legend(fontsize=9)
-    ax.spines[["top", "right"]].set_visible(False)
-    fig.tight_layout()
-    fig.savefig(run_dir / "roc_curve.png", dpi=200, bbox_inches="tight")
-    plt.close(fig)
-
-    pd.DataFrame({
-        "fpr": mean_fpr,
-        "tpr_mean": mean_tpr,
-        "tpr_std": std_tpr,
-    }).to_csv(run_dir / "roc_data.csv", index=False)
+    import pandas as pd
+    df = pd.read_csv(csv_path, dtype=str)
+    return df.to_dict(orient="records")
 
 
-def plot_feature_histograms(pipe, X, datasets, run_dir):
+def vopad_missing_vowels(row: dict) -> set[str]:
     """
-    Plot histograms for each feature, with one distribution per dataset.
-    Saves two sets: before scaling (after drop_sig/replace_nan) and after scaling.
-
-    Parameters
-    ----------
-    pipe : fitted ImbPipeline
-        The full fitted pipeline. Only steps up to and including the scaler are used.
-    X : np.ndarray
-        Raw input data.
-    datasets : np.ndarray
-        Dataset label for each sample (e.g. "SVD", "AVFAD").
-    run_dir : Path
-        Directory where histogram plots are saved.
+    Parsuje sloupec missing_vowels (např. "a,e,i,") do setu znaků samohlásek.
     """
-    hist_dir_pre = Path(run_dir) / "histograms_pre_scaling"
-    hist_dir_post = Path(run_dir) / "histograms_post_scaling"
-    hist_dir_pre.mkdir(exist_ok=True)
-    hist_dir_post.mkdir(exist_ok=True)
-
-    STEPS_TO_EXCLUDE = {"selector", "feat_aug", "resampler", "clf"}
-    pre_steps, post_steps = [], []
-    scaler_seen = False
-    for name, step in pipe.steps:
-        if name in STEPS_TO_EXCLUDE:
-            break
-        if not scaler_seen:
-            pre_steps.append((name, step))
-        else:
-            post_steps.append((name, step))
-        if name == "scaler":
-            scaler_seen = True
-
-    pre_pipe = ImbPipeline(pre_steps)
-    post_pipe = ImbPipeline(pre_steps + post_steps)
-
-    X_pre = pre_pipe.transform(X)
-    X_post = post_pipe.transform(X)
-
-    dataset_labels = np.unique(datasets)
-
-    cmap = plt.colormaps.get_cmap("tab10")
-    colors = [cmap(i / max(len(dataset_labels) - 1, 1)) for i in range(len(dataset_labels))]
-
-    for X_feat, hist_dir, label in [
-        (X_pre, hist_dir_pre, "pre-scaling"),
-        (X_post, hist_dir_post, "post-scaling"),
-    ]:
-        n_features = X_feat.shape[1]
-        for i in range(n_features):
-            fig, ax = plt.subplots(figsize=(7, 4))
-            for j, ds in enumerate(dataset_labels):
-                mask = datasets == ds
-                ax.hist(
-                    X_feat[mask, i],
-                    bins=40,
-                    alpha=0.5,
-                    color=colors[j],
-                    label=ds,
-                    density=True,
-                )
-            ax.set_title(f"Feature {i} ({label})")
-            ax.set_xlabel("Value")
-            ax.set_ylabel("Density")
-            ax.legend()
-            fig.tight_layout()
-            fig.savefig(hist_dir / f"feature_{i:03d}.png", dpi=120)
-            plt.close(fig)
+    raw = row.get("missing_vowels") or ""
+    if not isinstance(raw, str) or raw.strip().lower() in {"", "nan", "none"}:
+        return set()
+    return {v.strip() for v in raw.split(",") if v.strip()}
 
 
-def run_visualizations(config, best_estimator, X, y, groups, pathologies, datasets, cv, run_dir):
+def process_vopad_session(session_row: dict, writer, record_idx: int) -> int:
     """
-    Generate and save visualizations after a completed grid search run.
+    Zpracuje všechny WAV soubory samohlásek pro jednu VOPAD session.
 
-    Parameters
-    ----------
-    config : dict
-        Experiment configuration. Recognized keys:
-            ``plot_recall_per_pathology`` – bool, generate Recall per pathology plots (default: True)
-            ``plot_roc_curve``            – bool, generate ROC curve plot (default: True)
-            ``plot_feature_histograms``   – bool, generate feature histograms (default: False)
-            ``min_pathology_samples``     – int, min samples per pathology to include (default: 3)
-    best_estimator : fitted sklearn estimator
-        Best estimator returned by GridSearchCV. Used directly to predict the full dataset.
-    X : np.ndarray
-        Full feature matrix.
-    y : np.ndarray
-        Target labels.
-    groups : np.ndarray
-        Group labels for cross-validation splitting.
-    pathologies : np.ndarray
-        Pathology label for each sample.
-    datasets : np.ndarray
-        Dataset source label for each sample, used for feature histogram grouping.
-    cv : cross-validator
-        Cross-validation splitter — used only for ROC curve and feature histograms.
-    run_dir : Path
-        Directory where output files are saved.
+    Pojmenování souborů:
+        {vowel}{rep}_{sessionid}.wav
+    Např.:
+        a1_ZJ90F-CZ-Z-92437_2024-03-14_213038.wav
+        e2_ZJ90F-CZ-Z-92437_2024-03-14_213038.wav
 
-    Output files
-    ------------
-    per_pathology_recall_all.csv  – Recall for all pathologies (with >= min_samples)
-    recall_all.png                – bar plot of Recall for all pathologies
-    per_pathology_recall_weak.csv – Recall for pathologies below median Recall
-    recall_weak.png               – bar plot of weak pathologies only
-    roc_curve.png                 – mean ROC curve with std band across CV folds (if enabled)
-    roc_data.csv                  – numerical ROC curve data for re-plotting (if enabled)
-    histograms_pre_scaling/       – per-feature histograms before scaling (if enabled)
-    histograms_post_scaling/      – per-feature histograms after scaling (if enabled)
+    Jeden řádek CSV je zapsán pro každý nalezený soubor (vowel, opakování).
+    Přeskočí:
+      - mluvčí pod MIN_AGE
+      - samohlásky uvedené v missing_vowels
+      - sessions s database_administrator_note
     """
-    if config.get("plot_recall_per_pathology", True):
-        min_samples = config.get("min_pathology_samples", 3)
+    sessionid = str(session_row.get("sessionid", "") or "").strip()
+    if not sessionid:
+        return record_idx
 
-        # Classify the full dataset in one pass with the fitted estimator
-        y_pred = best_estimator.predict(X)
+    if not is_adult(session_row.get("talkerage")):
+        return record_idx
 
-        df = per_pathology_recall(y, y_pred, pathologies, min_samples=min_samples)
+    admin_note = str(session_row.get("database_administrator_note") or "").strip().lower()
+    if admin_note and admin_note not in {"nan", "none", ""}:
+        print(f"VOPAD skipped (admin note): {sessionid!r} — {admin_note}")
+        return record_idx
 
-        df.to_csv(run_dir / "per_pathology_recall_all.csv", index=False)
-        plot_recall_by_pathology(df, run_dir / "recall_all.png")
+    missing = vopad_missing_vowels(session_row)
 
-        df_weak = df[df["Recall"] < df["Recall"].median()]
-        df_weak.to_csv(run_dir / "per_pathology_recall_weak.csv", index=False)
-        plot_recall_by_pathology(df_weak, run_dir / "recall_weak.png", title="Recall per pathology (weak)")
+    sex_mf = normalize_sex_mf(session_row.get("talkersex"))
+    fmin, fmax = f0_range_for_sex(sex_mf)
 
-    if config.get("plot_roc_curve", True):
-        if not hasattr(best_estimator[-1], "predict_proba"):
-            print("Classifier does not support predict_proba, skipping ROC plot.")
-        else:
-            plot_roc_curve(best_estimator, X, y, groups, cv, run_dir)
+    wav_files = sorted(VOPAD_ROOT.rglob(f"*_{sessionid}.wav"))
+    if not wav_files:
+        return record_idx
 
-    if config.get("plot_feature_histograms", False):
-        plot_feature_histograms(best_estimator, X, datasets, run_dir)
+    for wav_path in wav_files:
+        m = VOPAD_PREFIX_RE.match(wav_path.name)
+        if not m:
+            continue
+
+        vowel = m.group("vowel")
+        if vowel in missing:
+            continue
+
+        try:
+            x, fs = sf.read(wav_path, dtype=np.float32)
+        except Exception as e:
+            print(f"VOPAD skipped (read error): {wav_path.name} — {e}")
+            continue
+
+        fs = int(fs)
+        x = preprocess_signal(x, fs)
+
+        try:
+            sound = parselmouth.Sound(x, sampling_frequency=fs)
+            pitch = call(sound, "To Pitch", 0.0, fmin, fmax)
+            mean_f0 = call(pitch, "Get mean", 0, 0, "Hertz")
+        except Exception as e:
+            print(f"VOPAD skipped (F0 error): {wav_path.name} — {e}")
+            continue
+
+        record_id = f"{record_idx:04d}"
+        wav_name = f"record_{record_id}.wav"
+        sf.write(OUT_DIR / wav_name, x, fs)
+
+        pathology_raw = str(session_row.get("pathologies") or "").strip()
+        pathology = pathology_raw if pathology_raw and pathology_raw.lower() not in {"nan", "none"} else ""
+
+        row = {
+            "id": record_id,
+            "sessionid": sessionid,
+            "talkerid": f"VOPAD_{str(session_row.get('talkerid', '')).strip()}",
+            "talkersex": sex_mf,
+            "age": session_row.get("talkerage"),
+            "pathologies": pathology,
+            "file": wav_path.name,
+            "vowel": vowel,
+            "intonation": "n",
+            "dataset": "VOPAD",
+            "nan_f0": np.isnan(mean_f0),
+        }
+
+        writer.writerow(row)
+        record_idx += 1
+
+    return record_idx
+
+# ============================================================
+# Public API
+# ============================================================
+
+
+def build_dataset():
+
+    svd_metadata = load_svd_metadata(SVD_METADATA_CSV)
+
+    with open(OUT_CSV, "w", newline="", encoding="utf-8") as f:
+
+        writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS)
+        writer.writeheader()
+
+        idx = 0
+
+        for p in tqdm(list(SVD_ROOT.rglob("*.nsp")), desc="Processing SVD"):
+            idx = process_svd_file(p, svd_metadata, writer, idx)
+
+        for p in tqdm(list(VOICED_ROOT.rglob("*.dat")), desc="Processing VOICED"):
+            idx = process_voiced_file(p, writer, idx)
+
+        avfad_meta = load_avfad_metadata(AVFAD_XLSX)
+
+        for r in tqdm(avfad_meta, desc="Processing AVFAD"):
+            for suffix, vowel in AVFAD_FILES.items():
+                p = find_avfad_wav(r["file_id"], suffix)
+                if p is None:
+                    continue
+                idx = process_avfad_file(p, r, vowel, writer, idx)
+
+        # PVQD
+        pvqd_meta = load_pvqd_metadata(PVQD_DEMOGRAPHICS_XLSX)
+        for r in tqdm(pvqd_meta, desc="Processing PVQD"):
+            pid = r["participant_id"]
+            for p in PVQD_ROOT.rglob("*.wav"):
+                if pvqd_is_a_vowel_file(p.name, pid):
+                    idx = process_pvqd_file(p, r, writer, idx)
+
+        # VOPAD
+        vopad_meta = load_vopad_metadata(VOPAD_METADATA_CSV)
+        for r in tqdm(vopad_meta, desc="Processing VOPAD"):
+            idx = process_vopad_session(r, writer, idx)
+
+
+if __name__ == "__main__":
+    build_dataset()
