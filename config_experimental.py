@@ -13,7 +13,7 @@ config = {
     # ------------------------------------------------------------------
     # Experiment metadata
     # ------------------------------------------------------------------
-    "experiment_name": "SMOTE_PAPER_balanced",
+    "experiment_name": "debugging",
     "experiment_description": "experiment",
 
     # ------------------------------------------------------------------
@@ -43,10 +43,10 @@ config = {
     # ------------------------------------------------------------------
     # Cross-validation & scoring
     # ------------------------------------------------------------------
-    "cv": StratifiedGroupKFold(n_splits=10),
+    "cv": StratifiedGroupKFold(n_splits=5),
     "scoring_mode": "multimetric",
     "refit_metric": "uar",
-    "n_repeats": 1000,          # 0 = vypnuto, jinak počet opakování repeated CV
+    "n_repeats": 1,          # 0 = vypnuto, jinak počet opakování repeated CV
     "plot_uar_per_pathology": True,
     "plot_feature_histograms": True,
 
@@ -126,7 +126,7 @@ config = {
         "mfcc__sr": sampling_rate,
         "mfcc__n_mfcc": 20,
 
-        "timedomain__enabled": True,
+        "timedomain__enabled": False,
         "timedomain__sr": sampling_rate,
         "timedomain__use_zcr": False,
         "timedomain__use_entropy": False,
@@ -136,13 +136,23 @@ config = {
         "zcr__enabled": False,
         "zcr__sr": sampling_rate,
 
-        "spectral__enabled": True,
+        "spectral__enabled": False,
         "spectral__sr": sampling_rate,
 
         "opensmile__enabled": False,
         "opensmile__sr": sampling_rate,
         "opensmile__feature_set": "GeMAPS",       # "GeMAPS" | "ComParE_2016"
         "opensmile__feature_level": "functionals",
+
+        "f0deriv__enabled": True,
+        "f0deriv__sr": sampling_rate,
+
+        "nonlinear__enabled": True,
+        "nonlinear__sr": sampling_rate,
+
+        "vocaltract__enabled": True,
+        "vocaltract__sr": sampling_rate,
+        "vocaltract__lp_order": 12,
 
         # --- Feature augmentation (after extraction, before resampling) --
         "feat_aug__enabled": False,
@@ -174,15 +184,25 @@ config = {
     # ------------------------------------------------------------------
     "param_grid": [
         {
-            "clf__n_estimators": [100, 200, 400, 500, 600],
-            "clf__max_depth": [None, 5, 10, 20, 30],
-            "clf__min_samples_split": [2, 5, 10],
-            "clf__min_samples_leaf": [1, 2, 3, 4, 5, 10],
-            "clf__max_features": ["sqrt", "log2", None, 0.3, 0.5],
+            "clf__n_estimators": [400, 500],
+            "clf__max_depth": [None, 5, 10],
+            "clf__min_samples_split": [2, 5],
+            "clf__min_samples_leaf": [1, 2],
+            "clf__max_features": [None, 0.3, 0.5],
             "clf__max_samples": [0.6, 0.8, 1.0],
-            "clf__bootstrap": [True, False],
-            "clf__criterion": ["gini", "entropy"],
+            # "clf__bootstrap": [True, False],
+            "clf__criterion": ["gini"],
             "clf__class_weight": ["balanced"],
+
+            # "clf__n_estimators": [100, 200, 400, 500, 600],
+            # "clf__max_depth": [None, 5, 10, 20, 30],
+            # "clf__min_samples_split": [2, 5, 10],
+            # "clf__min_samples_leaf": [1, 2, 3, 4, 5, 10],
+            # "clf__max_features": ["sqrt", "log2", None, 0.3, 0.5],
+            # "clf__max_samples": [0.6, 0.8, 1.0],
+            # "clf__bootstrap": [True, False],
+            # "clf__criterion": ["gini", "entropy"],
+            # "clf__class_weight": ["balanced"],
 
             # "synthesizer__n_samples": [200, 300],
             # "synthesizer__n_augmentations": [1, 2, 3],

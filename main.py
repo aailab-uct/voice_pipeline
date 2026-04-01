@@ -33,6 +33,9 @@ from feature_extraction import (
     ZCRExtractor,
     SpectralFeaturesExtractor,
     OpenSmileExtractor,
+    F0DerivativesExtractor,
+    NonlinearExtractor,
+    VocalTractExtractor
 )
 from signal_augmenters import RawAugmenter, WaveformSynthesizer
 from feature_augmenters import FeatureAugmenter
@@ -45,6 +48,7 @@ import warnings
 
 # shouldnt have impact on calculations
 warnings.filterwarnings("ignore", message="All-NaN slice encountered")
+warnings.filterwarnings("ignore", message="R^2 score is not well-defined with less than two samples")
 
 # ==========
 # 1) Build imblearn pipeline
@@ -130,6 +134,9 @@ def build_pipeline(pipeline_params: dict | None = None, random_state: int = 42) 
             ("timedomain",  TimeDomainFeaturesExtractor(cache_disabled=_disable_cache)),
             ("zcr",         ZCRExtractor(cache_disabled=_disable_cache)),
             ("spectral",    SpectralFeaturesExtractor(cache_disabled=_disable_cache)),
+            ("f0deriv", F0DerivativesExtractor(cache_disabled=_disable_cache)),
+            ("nonlinear", NonlinearExtractor(cache_disabled=_disable_cache)),
+            ("vocaltract", VocalTractExtractor(cache_disabled=_disable_cache)),
             ("opensmile",   OpenSmileExtractor(cache_disabled=_disable_cache)),
             # --- post-extraction ---
             ("drop_sig",    DropSignalColumn()),
