@@ -20,11 +20,12 @@ atexit.register(cache.flush_to_disk)
 
 
 # ============================================================
-# Sex normalization (to m/f)
+# Helper functions
 # ============================================================
 
+# Normalize sex labels
 
-def normalize_sex_mf(value):
+def normalize_sex(value):
     """Normalize a sex label to ``"m"`` or ``"f"``.
 
     Parameters
@@ -47,13 +48,28 @@ def normalize_sex_mf(value):
 
     s = str(value).strip().lower()
 
-    if s in {"m", "male", "man", "0"}:
+    if s in {"m", "male", "man", "0", 0}:
         return "m"
-
-    if s in {"f", "female", "woman", "w", "1"}:
+    elif s in {"f", "female", "woman", "w", "1", 1}:
         return "f"
+    else:
+        raise ValueError(f"Unknown sex label: {value}")
 
     return None
+
+
+# sex-specific F0 ranges
+
+F0_RANGES = {
+    "m": (75.0, 300.0),
+    "f": (100.0, 600.0),
+}
+
+DEFAULT_F0_RANGE = (75.0, 600.0)  # if sex not known try full range
+
+
+def f0_range_for_sex(sex):
+    return F0_RANGES.get(sex, DEFAULT_F0_RANGE)
 
 
 # ============================================================
@@ -234,7 +250,7 @@ class TimeDomainFeaturesExtractor(FeatureExtractor):
         use_zcr=True,
         use_entropy=True,
         use_skewness=True,
-        sex_col=1,
+        sex_col=None,
         f0_range_m=(75.0, 300.0),
         f0_range_f=(100.0, 600.0),
     ):
@@ -303,14 +319,8 @@ class TimeDomainFeaturesExtractor(FeatureExtractor):
         X_out = []
         for row in X:
             x = row[0]
-            sex_val = row[self.sex_col] if len(row) > self.sex_col else None
-            sex_mf = normalize_sex_mf(sex_val)
-            if sex_mf == "m":
-                fmin, fmax = self.f0_range_m
-            elif sex_mf == "f":
-                fmin, fmax = self.f0_range_f
-            else:
-                fmin, fmax = self.fmin, self.fmax
+            sex = normalize_sex(row[self.sex_col] if self.sex_col is not None else None)
+            fmin, fmax = f0_range_for_sex(sex)
             features = self.cached_extraction(x, fmin=fmin, fmax=fmax, sr=self.sr)
             mask = [
                 self.use_f0,
@@ -830,7 +840,7 @@ class F0DerivativesExtractor(FeatureExtractor):
         X_out = []
         for row in X:
             x = row[0]
-            sex_mf = normalize_sex_mf(row[self.sex_col] if len(row) > self.sex_col else None)
+            sex_mf = normalize_sex(row[self.sex_col] if len(row) > self.sex_col else None)
             if sex_mf == "m":
                 fmin, fmax = self.f0_range_m
             elif sex_mf == "f":

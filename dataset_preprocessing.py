@@ -22,6 +22,9 @@ import parselmouth
 from parselmouth.praat import call
 import pandas as pd
 
+from voice_pipeline.feature_extraction import normalize_sex
+from voice_pipeline.feature_extraction import f0_range_for_sex
+
 
 # ============================================================
 # Output
@@ -79,57 +82,13 @@ def is_adult(age) -> bool:
 # F0 configuration
 # ============================================================
 
-F0_RANGES = {
-    "m": (75.0, 300.0),
-    "f": (100.0, 600.0),
-}
-
-DEFAULT_F0_RANGE = (60.0, 250.0)  # TODO: Why? this makes litlle sense if m starts at 75 and f at 100.
-
-
-def normalize_sex_mf(value):  # TODO: duplicate code of feature_extraction.py
-    """Normalize a sex label to ``"m"`` or ``"f"``.
-
-    Parameters
-    ----------
-    value : object
-        Original sex or gender label from a source dataset.
-
-    Returns
-    -------
-    str or None
-        ``"m"`` for male labels, ``"f"`` for female labels, and ``None`` if
-        the label is unknown.
-    """
-    if value is None:
-        return None
-
-    s = str(value).strip().lower()
-
-    if s in {"m", "male", "man"}:
-        return "m"
-
-    # SVD uses 'w' for women
-    if s in {"f", "female", "woman", "w"}:
-        return "f"
-
-    if s == "0":
-        return "m"
-
-    if s == "1":
-        return "f"
-
-    return None
-
-
-def f0_range_for_sex(sex_mf):
-    return F0_RANGES.get(sex_mf, DEFAULT_F0_RANGE)
 
 
 # ============================================================
 # Shared signal preprocessing
 # ============================================================
 
+# TODO: add comments
 TRIM_TOP_DB = 20
 TARGET_RMS = 0.1
 MIN_RMS = 1e-6
@@ -395,7 +354,7 @@ def process_pvqd_file(wav_path: Path, src_row: dict, writer, record_idx: int) ->
 
     x, _ = librosa.effects.trim(x, top_db=15)
 
-    sex_mf = normalize_sex_mf(src_row.get("sex"))
+    sex_mf = normalize_sex(src_row.get("sex"))
     fmin, fmax = f0_range_for_sex(sex_mf)
 
     sound = parselmouth.Sound(x, sampling_frequency=int(fs))
@@ -505,7 +464,7 @@ def process_svd_file(nsp_path: Path, metadata, writer, record_idx):
 
     sf.write(OUT_DIR / wav_name, x, fs)
 
-    sex_mf = normalize_sex_mf(src.get("talkersex"))
+    sex_mf = normalize_sex(src.get("talkersex"))
     fmin, fmax = f0_range_for_sex(sex_mf)
 
     sound = parselmouth.Sound(x, sampling_frequency=fs)
@@ -574,7 +533,7 @@ def process_voiced_file(dat_path: Path, writer, record_idx):
 
     x, _ = librosa.effects.trim(x, top_db=15, frame_length=256 * fs // 50000, hop_length=65 * fs // 50000)
 
-    sex_mf = normalize_sex_mf(info.get("gender"))
+    sex_mf = normalize_sex(info.get("gender"))
     fmin, fmax = f0_range_for_sex(sex_mf)
 
     sound = parselmouth.Sound(x, sampling_frequency=fs)
@@ -665,7 +624,7 @@ def process_avfad_file(wav_path: Path, src_row: dict, vowel: str, writer, record
 
     x = preprocess_avfad_signal(x, fs, crop_to_one_rep=AVFAD_CROP_TO_ONE_REP)
 
-    sex_mf = normalize_sex_mf(src_row.get("sex"))
+    sex_mf = normalize_sex(src_row.get("sex"))
     fmin, fmax = f0_range_for_sex(sex_mf)
 
     # bezpečný výpočet F0 (skip problematických souborů)

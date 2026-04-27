@@ -27,7 +27,7 @@ def build_dataset(
     include_sex: bool = True,
     allowed_vowels: set[str] | str | None = "a",
     allowed_intonations: set[str] | str | None = None,
-    selected_datasets: set[str] | None = None,
+    selected_datasets: set[str] | str | None = None,
     selected_fs: int | None = None,
     drop_nan_f0: bool = True,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
@@ -45,12 +45,10 @@ def build_dataset(
         Whether to include sex as a feature column.
     allowed_vowels : set of str or str or None, default="a"
         Allowed vowels, for example ``{"a", "i"}``. ``None`` disables this filter.
-    allowed_intonations : set of str or None, default="n"
-        Allowed intonations, for example ``{"n"}``. ``None`` disables this
-        filter.
-    selected_datasets : set of str or None, default=None
-        Allowed dataset names, for example ``{"SVD", "VOICED"}``. ``None``
-        disables this filter.
+    allowed_intonations : set of str or str or None, default="n"
+        Allowed intonations, for example ``{"n"}``. ``None`` disables this filter.
+    selected_datasets : set of str or str or None, default=None
+        Allowed dataset names, for example ``{"SVD", "VOICED"}``. ``None`` disables this filter.
     selected_fs : int or None, default=None
         Target sampling rate in Hz. ``None`` keeps the original sampling rate.
     drop_nan_f0 : bool, default=True
@@ -73,8 +71,8 @@ def build_dataset(
 
     if excluded_pathologies is None:
         excluded_pathologies = set()
-    elif type(excluded_pathologies) is str:
-        excluded_pathologies = {excluded_pathologies}
+    if type(allowed_vowels) is str:
+        allowed_vowels = {allowed_vowels}
     if allowed_vowels is not None:
         if type(allowed_vowels) is str:
             allowed_vowels = {allowed_vowels}
@@ -102,8 +100,8 @@ def build_dataset(
             continue
 
         record_id = row["id"]
-        original_file = AUDIO_DIR / f"record_{record_id}.wav"
-        cached_file = AUDIO_DIR / f"record_{record_id}_{selected_fs}.wav" if selected_fs is not None else original_file
+        original_file = AUDIO_DIR / f"record_{record_id:04d}.wav"
+        cached_file = AUDIO_DIR / f"record_{record_id:04d}_{selected_fs}.wav" if selected_fs is not None else original_file
         if cached_file.exists():
             signal, fs = sf.read(cached_file, dtype="float32")
         elif original_file.exists():
@@ -119,10 +117,6 @@ def build_dataset(
 
         features = [signal]
 
-        if include_age:
-            age = int(row["age"]) if row["age"] else np.nan
-            features.append(age)
-
         if include_sex:
             match row["talkersex"].lower():  # TODO: this probably should already be normalized at his point
                 case "f" | "w" | "female" | "woman":
@@ -133,6 +127,11 @@ def build_dataset(
                     sex = np.nan
                     print(f"Warning: unknown sex '{row['talkersex']}' for record {record_id}")
             features.append(sex)
+
+        if include_age:
+            age = int(row["age"]) if row["age"] else np.nan
+            features.append(age)
+
 
         is_healthy = row["pathologies"].lower() == "healthy"
         label = 0 if is_healthy else 1

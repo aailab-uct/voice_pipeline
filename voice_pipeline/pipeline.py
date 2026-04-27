@@ -21,7 +21,7 @@ from voice_pipeline.signal_augmentation import RawAugmenter, WaveformSynthesizer
 from voice_pipeline.utils import ReplaceNaN
 
 
-def build_pipeline(pipeline_params: dict | None = None, random_state: int = 42) -> ImbPipeline:
+def build_pipeline(pipeline_params: dict | None = None, random_state: int = 42, config: dict | None = None) -> ImbPipeline:
     """Create the audio-to-classification pipeline.
 
     The raw waveform is always the first column of ``X``. The pipeline then:
@@ -47,6 +47,8 @@ def build_pipeline(pipeline_params: dict | None = None, random_state: int = 42) 
     """
     if pipeline_params is None:
         pipeline_params = {}
+    if config is None:
+        config = {}
 
     raw_augmentation_enabled = pipeline_params.get("raw_aug__enabled", False)
     synthesis_enabled = (
@@ -54,12 +56,14 @@ def build_pipeline(pipeline_params: dict | None = None, random_state: int = 42) 
     )
     disable_feature_cache = bool(raw_augmentation_enabled or synthesis_enabled)
 
+
     pipe = ImbPipeline(
         steps=[
             ("raw_aug", RawAugmenter(random_state=random_state)),
             ("synthesizer", WaveformSynthesizer(enabled=False, n_samples=0, random_state=random_state)),
             ("mfcc", MFCCExtractor(cache_disabled=disable_feature_cache)),
-            ("timedomain", TimeDomainFeaturesExtractor(cache_disabled=disable_feature_cache)),
+            ("timedomain", TimeDomainFeaturesExtractor(cache_disabled=disable_feature_cache,
+                                                       sex_col=1 if pipeline_params.get("include_sex", True) else None)),
             ("zcr", ZCRExtractor(cache_disabled=disable_feature_cache)),
             ("spectral", SpectralFeaturesExtractor(cache_disabled=disable_feature_cache)),
             ("f0deriv", F0DerivativesExtractor(cache_disabled=disable_feature_cache)),
