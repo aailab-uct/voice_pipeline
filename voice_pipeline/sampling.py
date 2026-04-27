@@ -1,48 +1,61 @@
-"""Module for oversampling transformers."""
+"""Oversampling methods for imbalanced voice datasets."""
+
+from numbers import Integral, Real
 
 import numpy as np
 from imblearn.base import BaseSampler
 from imblearn.over_sampling._smote.base import BaseSMOTE
-from sklearn.utils._param_validation import Interval, StrOptions
-from numbers import Real, Integral
-from src.nn import VAEModel
 from numpy.typing import NDArray
+from sklearn.utils._param_validation import Interval, StrOptions
+
+try:
+    from voice_pipeline.nn import VAEModel
+except ImportError:
+    VAEModel = None
 
 
 def _compute_number_per_class(
     classes: np.ndarray, sampling_strategy: list | int | float | dict | str = "auto"
 ) -> dict[int, int]:
-    """
-    Compute desired number of samples per class based on sampling_strategy.
+    """Compute target sample counts for each class.
 
-    :param classes: Array of class labels
-    :type classes: np.ndarray
-    :param sampling_strategy: Sampling strategy to determine desired counts
-        - "auto": resample all classes to the maximum class count
-        - dict|list: specific counts or multipliers per class
-        - int: specific count for all classes
-        - float: multiply max class count by float for all classes
-    :type sampling_strategy: list | int | float | dict | str
-    :return: Desired number of samples per class as a dict {class_label: count}
-    :rtype: dict[int, int]
-    """
-    unique, counts = np.unique(classes, return_counts=True)  # get class distribution
-    old_counts = dict(zip(unique, counts))  # store as dict
+    Parameters
+    ----------
+    classes : numpy.ndarray
+        Class label for each row.
+    sampling_strategy : list, int, float, dict, or str, default="auto"
+        Strategy used to determine target counts. ``"auto"`` balances all
+        classes to the largest class. Integers set an absolute target count.
+        Floats scale the largest class count. Dictionaries and lists can
+        provide per-class targets or multipliers.
 
-    if sampling_strategy == "auto":  # balance all classes to the max count
+    Returns
+    -------
+    dict
+        Mapping from class label to target count.
+
+    Raises
+    ------
+    ValueError
+        If ``sampling_strategy`` is unsupported or mixed-type.
+    """
+    unique, counts = np.unique(classes, return_counts=True)
+    old_counts = dict(zip(unique, counts))
+
+    if sampling_strategy == "auto":
         max_count = max(counts)
         new_counts = {cls: max_count for cls in classes}
-    elif isinstance(sampling_strategy, dict) or isinstance(sampling_strategy, list):  # specific counts per class
+    elif isinstance(sampling_strategy, dict) or isinstance(sampling_strategy, list):
         values = sampling_strategy.values() if isinstance(sampling_strategy, dict) else sampling_strategy
-        if all(isinstance(v, int) for v in values):  # specific counts
+        if all(isinstance(v, int) for v in values):
             new_counts = {cls: sampling_strategy[cls] for cls in classes}
-        elif all(isinstance(v, float) for v in values):  # specific multipliers for each class
+        elif all(isinstance(v, float) for v in values):
             new_counts = {cls: int(old_counts[cls] * sampling_strategy[cls]) for cls in classes}
         else:
             raise ValueError("sampling_strategy values must be all int or all float")
-    elif isinstance(sampling_strategy, int):  # specific count for all classes
+    elif isinstance(sampling_strategy, int):
         new_counts = {cls: sampling_strategy for cls in classes}
-    elif isinstance(sampling_strategy, float):  #  multiply max class count by float for all classes
+    elif isinstance(sampling_strategy, float):
         new_counts = {cls: int(max(counts) * sampling_strategy) for cls in classes}
     else:
         raise ValueError("String sampling_strategy not supported")
@@ -51,7 +64,7 @@ def _compute_number_per_class(
 
 
 class TunableBaseSampler(BaseSampler):
-    """Base class for tunable samplers with enable/disable functionality."""
+    """Base class for samplers that can be enabled or disabled."""
 
     _sampling_type = "over-sampling"
 
@@ -62,15 +75,26 @@ class TunableBaseSampler(BaseSampler):
         random_state: None | int,
         **kwargs,
     ) -> None:
+        """Initialize a tunable sampler.
+
+        Parameters
+        ----------
+        enabled : bool
+            Whether this sampler should modify the data.
+        additional_group_classes : list, int, or None
+            Columns in ``X`` used as additional grouping labels during
+            resampling.
+        random_state : int or None
+            Random seed for reproducibility.
+        **kwargs
+            Ignored compatibility arguments.
+
+        Raises
+        ------
+        ValueError
+            If ``additional_group_classes`` has an unsupported type.
         """
-        :param enabled: Whether to enable this sampler
-        :type enabled: bool
-        :param additional_group_classes: Columns in X to use as additional group identifiers
-        :type additional_group_classes: list | int | None
-        :param random_state: Random seed for reproducibility
-        :type random_state: None | int
-        """
-        del kwargs  # unused
+        del kwargs
         super().__init__()
         self.random_state = random_state
         self.enabled = enabled
@@ -90,19 +114,13 @@ class TunableBaseSampler(BaseSampler):
             return X, y
 
         classes = y
-        # incorporate additional group classes into class definition (to ensure stratification)
         for col in self.additional_group_classes:
             X_col = X[:, col]
-            unique_values = np.unique(X_col)  # get unique values in the column
-            class_offset = np.max(classes) + 1  # used to offset class labels
-            map_unique_to_class = {
-                val: idx * class_offset for idx, val in enumerate(unique_values)
-            }  # mapping from unique value to new class label
-            # this ensures that even float classes are handled as separate classes
-            mapped_classes = np.array(
-                [map_unique_to_class[val] for val in X_col]
-            )  # map original values to new class labels
-            classes = classes + mapped_classes  # combine original classes with new mapped classes
+            unique_values = np.unique(X_col)
+            class_offset = np.max(classes) + 1
+            map_unique_to_class = {val: idx * class_offset for idx, val in enumerate(unique_values)}
+            mapped_classes = np.array([map_unique_to_class[val] for val in X_col])
+            classes = classes + mapped_classes
         X_new, y_new = self._resample(X, y, classes, **params)
         return X_new, y_new
 
@@ -113,18 +131,34 @@ class TunableBaseSampler(BaseSampler):
         classes: NDArray[np.integer],
         **params,
     ) -> tuple[np.ndarray, np.ndarray]:
-        """To be implemented in subclasses."""
+        """Resample data in subclasses.
+
+        Parameters
+        ----------
+        X : numpy.ndarray
+            Input features.
+        y : numpy.ndarray
+            Target labels.
+        classes : numpy.ndarray
+            Class labels used for resampling.
+        **params
+            Optional sampler-specific parameters.
+
+        Returns
+        -------
+        tuple of numpy.ndarray
+            Resampled features and labels.
+        """
         raise NotImplementedError("Subclasses should implement this method.")
 
 
 class RandomCopySampler(TunableBaseSampler):
-    """Custom oversampler that randomly duplicates samples to match desired output.
+    """Duplicate existing rows to reach target class counts.
 
-    All samples from the resampled class have aproximately equal representation in the output - count of each sample
-    differs by at most 1.
+    Samples from each resampled class are represented as evenly as possible in
+    the output. Counts for individual source samples differ by at most one.
     """
 
-    # This is needed for sklearn compatibility - defines valid parameters and their types
     _parameter_constraints: dict = {
         "enabled": ["boolean"],
         "sampling_strategy": [
@@ -148,34 +182,28 @@ class RandomCopySampler(TunableBaseSampler):
         random_state: None | int = None,
         **kwargs,
     ) -> None:
+        """Initialize a random-copy sampler.
+
+        Parameters
+        ----------
+        enabled : bool, default=True
+            Whether this sampler should modify the data.
+        sampling_strategy : list, int, float, dict, or str, default="auto"
+            Strategy used to choose target class counts.
+        additional_group_classes : list, int, or None, default=None
+            Columns in ``X`` used as additional grouping labels.
+        random_state : int or None, default=None
+            Random seed for reproducibility.
+        **kwargs
+            Ignored compatibility arguments.
         """
-        Custom oversampler that randomly duplicates samples to match desired output.
-
-        All samples from the resampled class have aproximately equal representation in the output - count of each sample
-        differs by at most 1.
-
-        :param enabled: Whether to enable this sampler
-        :type enabled: bool
-        :param sampling_strategy: What sampling strategy to use
-
-            - "auto": resample all classes to the maximum class count
-            - dict|list: specific counts or multipliers per class
-            - int: specific count for all classes
-            - float: multiply max class count by float for all classes
-        :type sampling_strategy: list | int | float | dict | str
-        :param additional_group_classes: Columns in X to use as additional group identifiers
-        :type additional_group_classes: list | int | None
-        :param random_state: Random seed for reproducibility
-        :type random_state: None | int
-        :raises: ValueError
-        """
-        del kwargs  # unused
+        del kwargs
         super().__init__(
             enabled=enabled,
             additional_group_classes=additional_group_classes,
             random_state=random_state,
         )
-        self.sampling_strategy = sampling_strategy  # this will be processed in _resample
+        self.sampling_strategy = sampling_strategy
 
     def _resample(
         self,
@@ -184,13 +212,12 @@ class RandomCopySampler(TunableBaseSampler):
         classes: np.ndarray,
         **params,
     ) -> tuple[np.ndarray, np.ndarray]:
-        del params  # unused
+        del params
 
         new_counts = _compute_number_per_class(classes)
         X_new = []
         y_new = []
 
-        # Oversample each class to the desired count
         for cls, target in new_counts.items():
             cls_mask = classes == cls
             X_cls = X[cls_mask]
@@ -199,25 +226,21 @@ class RandomCopySampler(TunableBaseSampler):
 
             multiples = target // current_number
             remainder = target % current_number
-            for _ in range(multiples):  # add full copies
+            for _ in range(multiples):
                 X_new.append(X_cls)
                 y_new.append(y_cls)
-            samples = self.rng.choice(current_number, size=remainder, replace=False)  # add remaining samples
+            samples = self.rng.choice(current_number, size=remainder, replace=False)
             X_new.append(X_cls[samples])
             y_new.append(y_cls[samples])
         X_res = np.vstack(X_new)
         y_res = np.hstack(y_new)
-        # Shuffle the resampled dataset
         perm = self.rng.permutation(X_res.shape[0])
         return X_res[perm], y_res[perm]
 
 
 class SMOTESampler(TunableBaseSampler, BaseSMOTE):  # type: ignore[misc]
-    """Custom SMOTE oversampler that can also generate only artificial samples without copying existing ones."""
+    """SMOTE sampler with optional synthetic-only output."""
 
-    # Note that the code is mostly inherited from imblearn's BaseSMOTE class
-    # Complexity arises from integrating with imblearn's architecture and adding custom functionality which is not
-    # straightforward.
     _sampling_type = "over-sampling"
 
     def __init__(
@@ -229,20 +252,23 @@ class SMOTESampler(TunableBaseSampler, BaseSMOTE):  # type: ignore[misc]
         artificial_only: bool = False,
         **kwargs,
     ):
-        """Custom SMOTE oversampler that can also generate only artificial samples without copying existing ones.
+        """Initialize a SMOTE sampler.
 
-        Note that the undersampling is performed only if artificial_only is True, i.e. no real samples are droped unless
-        this is specified.
-
-        :param enabled: Whether to enable this sampler
-        :param sampling_strategy: What sampling strategy to use
-            - "auto": resample all classes to the maximum class count
-            - dict|list: specific counts or multipliers per class,
-            - int: specific count for all classes,
-            - float: multiply max class count by float for all classes
-        :param additional_group_classes: Columns in X to use as additional group identifiers
-        :param random_state: Random seed for reproducibility
-        :param artificial_only: If True, only generate synthetic samples without copying existing ones
+        Parameters
+        ----------
+        enabled : bool, default=True
+            Whether this sampler should modify the data.
+        sampling_strategy : list, int, float, dict, or str, default="auto"
+            Strategy used to choose target class counts.
+        additional_group_classes : list, int, or None, default=None
+            Columns in ``X`` used as additional grouping labels.
+        random_state : int or None, default=None
+            Random seed for reproducibility.
+        artificial_only : bool, default=False
+            If ``True``, return only generated samples. If ``False``, append
+            generated samples to the original data.
+        **kwargs
+            Optional compatibility arguments, including ``k_neighbors``.
         """
         super().__init__(
             enabled=enabled,
@@ -255,19 +281,17 @@ class SMOTESampler(TunableBaseSampler, BaseSMOTE):  # type: ignore[misc]
         self.artificial_only = artificial_only
 
     def _fit_resample(self, X: np.ndarray, y: np.ndarray, **params):  # type: ignore
-        self._validate_estimator()  # must be called before _resample to initialize nearest neighbors estimator
+        self._validate_estimator()
         return super()._fit_resample(X, y, **params)
 
     def _resample(self, X: np.ndarray, y: np.ndarray, classes: np.ndarray, **params) -> tuple[np.ndarray, np.ndarray]:
-        del params  # not used
+        del params
 
-        new_counts = _compute_number_per_class(classes, self.sampling_strategy)  # desired counts per class
+        new_counts = _compute_number_per_class(classes, self.sampling_strategy)
 
-        # copy inputs to output if not artificial only
         X_new = [] if self.artificial_only else [X.copy()]
         y_new = [] if self.artificial_only else [y.copy()]
 
-        # Oversample each class to the desired count
         for cls, target in new_counts.items():
             n_samples = target - (0 if self.artificial_only else np.sum(classes == cls))
             if n_samples <= 0:
@@ -276,31 +300,29 @@ class SMOTESampler(TunableBaseSampler, BaseSMOTE):  # type: ignore[misc]
             X_cls = X[cls_mask]
             y_cls = y[cls_mask]
 
-            self.nn_k_.fit(X_cls)  # fit nearest neighbors and retrieve neighbors so we can generate samples
+            self.nn_k_.fit(X_cls)
             nns = self.nn_k_.kneighbors(X_cls, return_distance=False)[:, 1:]  # type: ignore[attr-defined]
 
             X_syn, y_syn = self._make_samples(
                 X_cls,
                 y.dtype,
-                y_cls[0],  # target label used to label synthetic samples
+                y_cls[0],
                 X_cls,
                 nns,
                 n_samples,
                 1.0,
-            )  # generate synthetic samples
+            )
             X_new.append(X_syn)
             y_new.append(y_syn)
         X_res = np.vstack(X_new)
         y_res = np.hstack(y_new)
-        # Shuffle the resampled dataset
         perm = self.rng.permutation(X_res.shape[0])
         return X_res[perm], y_res[perm]
 
 
 class VAESampler(TunableBaseSampler):
-    """Resampler using Variational Autoencoder (VAE) to generate synthetic samples."""
+    """Generate synthetic samples with a variational autoencoder."""
 
-    # This is needed for sklearn compatibility - defines valid parameters and their types
     _parameter_constraints: dict = {
         "enabled": ["boolean"],
         "additional_group_classes": [
@@ -330,15 +352,29 @@ class VAESampler(TunableBaseSampler):
         epochs: int = 50,
         **kwargs,
     ) -> None:
+        """Initialize a VAE sampler.
+
+        Parameters
+        ----------
+        enabled : bool, default=True
+            Whether this sampler should modify the data.
+        additional_group_classes : list, int, or None, default=None
+            Columns in ``X`` used as additional grouping labels.
+        random_state : int or None, default=None
+            Random seed for reproducibility.
+        sampling_strategy : list, int, float, dict, or str, default="auto"
+            Strategy used to choose target class counts.
+        artificial_only : bool, default=False
+            If ``True``, return only generated samples. If ``False``, append
+            generated samples to the original data.
+        architecture : dict or None, default=None
+            VAE architecture settings. ``None`` uses the default architecture.
+        epochs : int, default=50
+            Number of VAE training epochs.
+        **kwargs
+            Ignored compatibility arguments.
         """
-        :param enabled: Whether to enable this sampler
-        :type enabled: bool
-        :param additional_group_classes: Columns in X to use as additional group identifiers
-        :type additional_group_classes: list | int | None
-        :param random_state: Random seed for reproducibility
-        :type random_state: None | int
-        """
-        del kwargs  # unused
+        del kwargs
         super().__init__(
             enabled=enabled,
             additional_group_classes=additional_group_classes,
@@ -351,17 +387,37 @@ class VAESampler(TunableBaseSampler):
 
     @property
     def architecture(self) -> dict:
-        """Get the architecture of the VAE model."""
+        """Return the VAE architecture settings.
+
+        Returns
+        -------
+        dict
+            Current VAE architecture dictionary.
+        """
         return self._architecture
 
     @architecture.setter
     def architecture(self, value: dict | None) -> None:
-        """Set the architecture of the VAE model."""
+        """Set the VAE architecture settings.
+
+        Parameters
+        ----------
+        value : dict or None
+            Architecture dictionary. ``None`` selects the default architecture.
+
+        Raises
+        ------
+        ImportError
+            If the VAE model implementation is unavailable.
+        """
+        if VAEModel is None:
+            raise ImportError(
+                "VAESampler needs voice_pipeline.nn.VAEModel, but that module is not present in this repository."
+            )
         if value is None:
             value = {"latent_dim": 10, "hidden_layers": [64, 32], "batch_size": 32}
         self._architecture = value
 
-        # Reinitialize the VAE model with the new architecture
         self.vae_model = VAEModel(
             latent_dim=self._architecture.get("latent_dim", 10),
             hidden_layers=self._architecture.get("hidden_layers", [64, 32]),
@@ -372,14 +428,25 @@ class VAESampler(TunableBaseSampler):
 
     @property
     def epochs(self) -> int:
-        """Get the number of training epochs for the VAE model."""
+        """Return the number of VAE training epochs.
+
+        Returns
+        -------
+        int
+            Number of training epochs.
+        """
         return self._epochs
 
     @epochs.setter
     def epochs(self, value: int) -> None:
-        """Set the number of training epochs for the VAE model."""
+        """Set the number of VAE training epochs.
+
+        Parameters
+        ----------
+        value : int
+            Number of training epochs.
+        """
         self._epochs = value
-        # If the VAE model is already initialized, update its epochs
         if hasattr(self, "vae_model"):
             self.vae_model.epochs = value
 
@@ -390,25 +457,32 @@ class VAESampler(TunableBaseSampler):
         classes: NDArray[np.integer],
         **params,
     ) -> tuple[np.ndarray, np.ndarray]:
-        """Resample the dataset using a VAE model to generate synthetic samples.
-        :param X: Input features
-        :type X: NDArray[np.floating]
-        :param y: Target labels
-        :type y: NDArray[np.floating] | NDArray[np.bool_]
-        :param classes: Class labels for each sample
-        :type classes: NDArray[np.integer]
-        :return: Resampled features and labels
-        :rtype: tuple[np.ndarray, np.ndarray]"""
-        del params  # unused
+        """Generate synthetic samples and return resampled data.
+
+        Parameters
+        ----------
+        X : numpy.ndarray
+            Input features.
+        y : numpy.ndarray
+            Target labels.
+        classes : numpy.ndarray
+            Class labels used for resampling.
+        **params
+            Ignored compatibility arguments.
+
+        Returns
+        -------
+        tuple of numpy.ndarray
+            Resampled features and labels.
+        """
+        del params
 
         self.vae_model.train(X, y, classes)
 
-        new_counts = _compute_number_per_class(classes, self.sampling_strategy)  # desired counts per class
+        new_counts = _compute_number_per_class(classes, self.sampling_strategy)
 
-        # copy inputs to output if not artificial only
         X_new = [] if self.artificial_only else [X.copy()]
         y_new = [] if self.artificial_only else [y.copy()]
-        # Oversample each class to the desired count
         for cls, target in new_counts.items():
             n_samples = target - (0 if self.artificial_only else np.sum(classes == cls))
             if n_samples <= 0:
@@ -419,6 +493,5 @@ class VAESampler(TunableBaseSampler):
             y_new.append(y_syn)
         X_res = np.vstack(X_new)
         y_res = np.hstack(y_new)
-        # Shuffle the resampled dataset
         perm = self.rng.permutation(X_res.shape[0])
         return X_res[perm], y_res[perm]

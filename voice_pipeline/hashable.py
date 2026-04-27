@@ -1,11 +1,17 @@
-"""A module providing a hashable wrapper around numpy arrays for caching purposes."""
+"""Hashable wrappers used by the feature cache."""
 
 import numpy as np
 from xxhash import xxh128
 
 
 class HashableArray:
-    """This is a wrapper around a numpy array to make it hashable for caching purposes."""
+    """Wrap a NumPy array so it can be used as a dictionary key.
+
+    Parameters
+    ----------
+    array : numpy.ndarray
+        Array to hash by its byte representation.
+    """
 
     def __init__(self, array: np.ndarray):
         self.array = array
@@ -19,7 +25,12 @@ class HashableArray:
 
 
 class HashableDict(dict):
-    """A dictionary that is hashable by cinverting to  its items."""
+    """Dictionary that hashes its key-value items.
+
+    Notes
+    -----
+    Values must themselves be hashable.
+    """
 
     def __hash__(self):
         return hash(frozenset(self.items()))

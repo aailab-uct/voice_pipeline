@@ -1,4 +1,4 @@
-"""Module for feature caching functionality."""
+"""Disk-backed cache for expensive feature extraction."""
 
 from pathlib import Path
 import pickle
@@ -6,10 +6,10 @@ import gzip
 
 
 class FeatureCache:
-    """Class for caching extracted features to disk."""
+    """Cache extracted feature vectors by extractor name and parameters."""
 
     def __init__(self):
-        """Initialize the feature cache."""
+        """Load an existing feature cache or create an empty one."""
         self.cache_file = Path("feature_cache.pkl.gz")
         if self.cache_file.exists():
             with gzip.open(self.cache_file, "rb") as f:
@@ -20,14 +20,31 @@ class FeatureCache:
             self.cache = {}
 
     def flush_to_disk(self):
-        """Flush the cache to disk. This should be called at program exit - `atexit.register` is recommended."""
+        """Write the current cache to disk.
+
+        Notes
+        -----
+        This method is intended to be registered with ``atexit.register``.
+        """
         with gzip.open(self.cache_file, "wb") as f:
             pickle.dump(self.cache, f)
         print("Feature cache flushed to disk.")
         print(f"Cache size: {len(self.cache)} items.")
 
     def cache_method(self, func):
-        """Decorator to cache method results based on class name, input, and kwargs."""
+        """Wrap an extraction method with cache lookup.
+
+        Parameters
+        ----------
+        func : callable
+            Class method that computes features from a hashable waveform and
+            hashable parameter dictionary.
+
+        Returns
+        -------
+        callable
+            Wrapped method that returns cached results when available.
+        """
 
         def wrapper(cls, x, kwargs):
             name = cls.__name__
@@ -41,7 +58,13 @@ class FeatureCache:
         return wrapper
 
     def invalidate(self, cls_name=None):
-        """Invalidate cache entries for a specific class or all entries if cls_name is None."""
+        """Remove cached entries.
+
+        Parameters
+        ----------
+        cls_name : str or None, default=None
+            Extractor class name to invalidate. ``None`` clears the full cache.
+        """
         if cls_name is None:
             self.cache.clear()
         else:

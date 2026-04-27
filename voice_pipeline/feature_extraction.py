@@ -9,11 +9,11 @@ import spkit as sp
 from sklearn.base import BaseEstimator, TransformerMixin
 import atexit
 import nolds
-from utils import _floor_power_of_2
+from voice_pipeline.utils import _floor_power_of_2
 import opensmile
 
-from src.feature_caching import FeatureCache
-from src.hashable import HashableArray, HashableDict
+from voice_pipeline.feature_cache import FeatureCache
+from voice_pipeline.hashable import HashableArray, HashableDict
 
 cache = FeatureCache()
 atexit.register(cache.flush_to_disk)
@@ -25,11 +25,22 @@ atexit.register(cache.flush_to_disk)
 
 
 def normalize_sex_mf(value):
-    """
-    Normalize sex/gender to 'm' or 'f'.
-    Returns None if unknown.
-    Accepts also 'w' (women) used in some SVD-related metadata.
-    We used mapping f->1 m->0 in the past, so we accept them for backward compatibility, but they are not recommended.
+    """Normalize a sex label to ``"m"`` or ``"f"``.
+
+    Parameters
+    ----------
+    value : object
+        Original sex or gender label.
+
+    Returns
+    -------
+    str or None
+        ``"m"`` for male labels, ``"f"`` for female labels, and ``None`` if
+        the label is unknown.
+
+    Notes
+    -----
+    The labels ``"0"`` and ``"1"`` are accepted for backward compatibility.
     """
     if value is None:
         return None
@@ -51,15 +62,22 @@ def normalize_sex_mf(value):
 
 
 class FeatureExtractor(BaseEstimator, TransformerMixin):
-    """
-    Base class for feature extractors.
+    """Base class for waveform feature extractors.
 
-    All classes inheriting from this must implement:
-    - __init__(self, enabled: bool, cache_disabled: bool = False)
-    - static method `_extract_full_features(x: np.ndarray, **params) -> np.ndarray`
-    - method `extract_feature(x: np.ndarray) -> np.ndarray`
-    The `_extract_full_features` method should extract all possible features, regardless of enabled switches.
-    The `extract_feature` method should return only the enabled features, and can use caching via `cached_extraction`.
+    Subclasses extract features from the waveform stored in column 0 and append
+    the selected feature values to each row.
+
+    Parameters
+    ----------
+    enabled : bool
+        Whether this extractor should append features.
+    cache_disabled : bool, default=False
+        Whether to bypass the feature cache.
+
+    Notes
+    -----
+    Subclasses must implement ``_extract_full_features`` and
+    ``extract_feature``.
     """
 
     def __init__(self, enabled: bool, cache_disabled: bool = False):
@@ -112,7 +130,11 @@ class FeatureExtractor(BaseEstimator, TransformerMixin):
 
 
 class DropSignalColumn(BaseEstimator, TransformerMixin):
-    """Drops the first column (waveform) from the input data."""
+    """Drop the waveform column after feature extraction.
+
+    The first column of ``X`` must contain the waveform. All remaining columns
+    are converted to ``float32`` features.
+    """
 
     def fit(self, X, y=None):
         assert X[0, 0].ndim == 1, "First column must be waveform"
@@ -130,9 +152,26 @@ class DropSignalColumn(BaseEstimator, TransformerMixin):
 
 
 class MFCCExtractor(FeatureExtractor):
-    """
-    Extracts MFCC features: mean and std over time for each coefficient.
-    Output: 2 * n_mfcc features per sample.
+    """Extract Mel-frequency cepstral coefficient features.
+
+    Parameters
+    ----------
+    sr : int, default=16000
+        Sampling rate in Hz.
+    n_mfcc : int, default=20
+        Number of MFCC coefficients.
+    enabled : bool, default=True
+        Whether this extractor should append features.
+    use_std : bool, default=True
+        Whether to include coefficient standard deviations in addition to
+        coefficient means.
+    cache_disabled : bool, default=False
+        Whether to bypass the feature cache.
+
+    Notes
+    -----
+    The full feature vector contains ``2 * n_mfcc`` values: means followed by
+    standard deviations.
     """
 
     def __init__(self, sr=16000, n_mfcc=20, enabled=True, use_std=True, cache_disabled=False):
@@ -156,11 +195,27 @@ class MFCCExtractor(FeatureExtractor):
 
 
 class TimeDomainFeaturesExtractor(FeatureExtractor):
-    """
-    Extracts time-domain features with per-feature enable switches.
+    """Extract time-domain voice features.
 
-    Features returned in following order:
-        mean_f0, stdev_f0, diff_pitch, hnr, jitter, shimmer, entropy, skewness
+    The available features are mean F0, F0 standard deviation, relative pitch
+    range, harmonics-to-noise ratio, jitter, shimmer, entropy, and skewness.
+
+    Parameters
+    ----------
+    sr : int, default=16000
+        Sampling rate in Hz.
+    fmin, fmax : float, default=60.0, 250.0
+        Fallback F0 search range when sex is unknown.
+    enabled : bool, default=True
+        Whether this extractor should append features.
+    cache_disabled : bool, default=False
+        Whether to bypass the feature cache.
+    use_diff_pitch, use_f0, use_stdf0, use_hnr, use_jitter, use_shimmer, use_zcr, use_entropy, use_skewness : bool
+        Per-feature switches.
+    sex_col : int, default=1
+        Column index containing the sex label.
+    f0_range_m, f0_range_f : tuple of float
+        Sex-specific F0 search ranges.
     """
 
     def __init__(
@@ -272,9 +327,19 @@ class TimeDomainFeaturesExtractor(FeatureExtractor):
 
 
 class ZCRExtractor(FeatureExtractor):
-    """
-    Extracts Zero Crossing Rate (ZCR) features.
-    Output: up to 2 features per sample (mean and/or std of ZCR).
+    """Extract zero-crossing rate features.
+
+    Parameters
+    ----------
+    sr : int, default=16000
+        Sampling rate in Hz.
+    use_mean, use_std : bool, default=True
+        Whether to include the mean and standard deviation of the frame-wise
+        zero-crossing rate.
+    enabled : bool, default=True
+        Whether this extractor should append features.
+    cache_disabled : bool, default=False
+        Whether to bypass the feature cache.
     """
 
     def __init__(self, sr=16000, use_mean=True, use_std=True, enabled=True, cache_disabled=False):
@@ -296,9 +361,23 @@ class ZCRExtractor(FeatureExtractor):
 
 
 class SpectralFeaturesExtractor(FeatureExtractor):
-    """
-    Extracts spectral features with per-feature enable switches.
-    Features (in order): spectral flatness, rolloff, centroid, contrast (7 bands).
+    """Extract spectral summary features.
+
+    Parameters
+    ----------
+    sr : int, default=16000
+        Sampling rate in Hz.
+    use_flatness, use_rolloff, use_centroid, use_contrast : bool, default=True
+        Per-feature switches.
+    enabled : bool, default=True
+        Whether this extractor should append features.
+    cache_disabled : bool, default=False
+        Whether to bypass the feature cache.
+
+    Notes
+    -----
+    The full feature vector contains spectral flatness, rolloff, centroid, and
+    spectral contrast bands.
     """
 
     def __init__(
@@ -353,7 +432,21 @@ def _get_smile(feature_set: str, feature_level: str):
 
 
 class OpenSmileExtractor(FeatureExtractor):
-    """Extracts OpenSMILE feature set (e.g., ComParE_2016, eGeMAPSv02) from waveform."""
+    """Extract an OpenSMILE feature set from a waveform.
+
+    Parameters
+    ----------
+    sr : int, default=16000
+        Sampling rate in Hz.
+    feature_set : str, default="ComParE_2016"
+        OpenSMILE feature set name.
+    feature_level : str, default="functionals"
+        OpenSMILE feature level name.
+    enabled : bool, default=False
+        Whether this extractor should append features.
+    cache_disabled : bool, default=False
+        Whether to bypass the feature cache.
+    """
 
     def __init__(
         self, sr=16000, feature_set="ComParE_2016", feature_level="functionals", enabled=False, cache_disabled=False
@@ -383,7 +476,19 @@ class OpenSmileExtractor(FeatureExtractor):
 
 
 def _normalise(x: np.ndarray) -> np.ndarray:
-    """Zero-mean / unit-variance normalisation."""
+    """Normalize a signal to zero mean and unit variance.
+
+    Parameters
+    ----------
+    x : numpy.ndarray
+        Input signal.
+
+    Returns
+    -------
+    numpy.ndarray
+        Normalized signal. If the standard deviation is nearly zero, only the
+        mean is removed.
+    """
     mu = np.mean(x)
     sigma = np.std(x)
     if sigma < 1e-10:
@@ -392,17 +497,19 @@ def _normalise(x: np.ndarray) -> np.ndarray:
 
 
 def _levinson_durbin(r: np.ndarray, order: int) -> np.ndarray:
-    """
-    Solve Yule-Walker equations via Levinson-Durbin recursion.
+    """Solve Yule-Walker equations with Levinson-Durbin recursion.
 
     Parameters
     ----------
-    r     : autocorrelation sequence r[0..order]
-    order : LP model order
+    r : numpy.ndarray
+        Autocorrelation sequence from lag 0 through ``order``.
+    order : int
+        Linear prediction model order.
 
     Returns
     -------
-    a : LP coefficients a[1..order]  (a[0]=1 implicit)
+    numpy.ndarray
+        Linear prediction coefficients. The leading coefficient 1 is implicit.
     """
     a = np.zeros(order)
     e = r[0]
@@ -425,13 +532,17 @@ def _levinson_durbin(r: np.ndarray, order: int) -> np.ndarray:
 
 
 def _lp_to_area(a: np.ndarray) -> np.ndarray:
-    """
-    Convert LP coefficients to vocal-tract area function
-    via the Schur (lattice) recursion.
+    """Convert linear prediction coefficients to vocal-tract areas.
+
+    Parameters
+    ----------
+    a : numpy.ndarray
+        Linear prediction coefficients.
 
     Returns
     -------
-    areas : shape (len(a)+1,) - relative tube cross-sections
+    numpy.ndarray
+        Relative tube cross-sections with length ``len(a) + 1``.
     """
     k_all = []
     coef = a.copy().astype(float)
@@ -451,20 +562,25 @@ def _lp_to_area(a: np.ndarray) -> np.ndarray:
 
 
 def _rqa_features(x: np.ndarray, m: int = 3, tau: int = 2, eps_frac: float = 0.10, lmin: int = 2) -> np.ndarray:
-    """
-    Compute RQA features (RR, DET, LAM) from a 1-D normalised signal.
+    """Compute recurrence quantification analysis features.
 
     Parameters
     ----------
-    x        : signal (normalised internally)
-    m        : embedding dimension
-    tau      : time delay
-    eps_frac : threshold as fraction of mean pairwise distance
-    lmin     : minimum line length for DET / LAM
+    x : numpy.ndarray
+        One-dimensional signal. It is normalized internally.
+    m : int, default=3
+        Embedding dimension.
+    tau : int, default=2
+        Time delay.
+    eps_frac : float, default=0.10
+        Recurrence threshold as a fraction of mean pairwise distance.
+    lmin : int, default=2
+        Minimum line length used for determinism and laminarity.
 
     Returns
     -------
-    np.ndarray([RR, DET, LAM], dtype=float32)
+    numpy.ndarray
+        Three values: recurrence rate, determinism, and laminarity.
     """
     x = _normalise(x)
     # pylint: disable=invalid-name
@@ -528,10 +644,25 @@ def _rqa_features(x: np.ndarray, m: int = 3, tau: int = 2, eps_frac: float = 0.1
 
 
 def _rpde(x: np.ndarray, m: int = 4, tau: int = 1, eps_frac: float = 0.10, T_max: int = 200) -> float:
-    """
-    Recurrence Period Density Entropy (Little et al., 2007).
+    """Compute recurrence period density entropy.
 
-    Returns normalised entropy H in [0, 1].
+    Parameters
+    ----------
+    x : numpy.ndarray
+        One-dimensional signal. It is normalized internally.
+    m : int, default=4
+        Embedding dimension.
+    tau : int, default=1
+        Time delay.
+    eps_frac : float, default=0.10
+        Recurrence threshold as a fraction of mean distance.
+    T_max : int, default=200
+        Maximum recurrence period considered.
+
+    Returns
+    -------
+    float
+        Normalized entropy in the interval [0, 1].
     """
     x = _normalise(x)
     N = len(x)
@@ -571,27 +702,29 @@ def _rpde(x: np.ndarray, m: int = 4, tau: int = 1, eps_frac: float = 0.10, T_max
 
 
 class F0DerivativesExtractor(FeatureExtractor):
-    """
-    Robust F0-derivative features for sustained-vowel analysis.
+    """Extract robust F0-derived features for sustained vowels.
 
-    Features (in order):
-        f0_iqr         - interquartile range of F0 (Hz)
-        f0_range       - max - min of voiced F0 frames (Hz)
-        ppe            - Pitch Period Entropy (normalised to [0, 1])
-        nan_rate       - fraction of unvoiced (NaN/zero) F0 frames
-        pitch_diff_std - std of relative cycle-to-cycle F0 change
-
-    All five are device-independent: they depend on the relative
-    distribution of F0 values, not on absolute signal amplitude.
+    The available features are F0 interquartile range, F0 range, pitch period
+    entropy, unvoiced-frame rate, and the standard deviation of relative
+    cycle-to-cycle F0 change. All features are independent of absolute signal
+    amplitude.
 
     Parameters
     ----------
-    sr          : sampling rate (Hz)
-    fmin, fmax  : fallback F0 search range when sex is unknown
-    f0_range_m  : (fmin, fmax) for male speakers
-    f0_range_f  : (fmin, fmax) for female speakers
-    sex_col     : column index in X rows containing sex/gender label
-    use_*       : per-feature enable switches
+    sr : int, default=16000
+        Sampling rate in Hz.
+    fmin, fmax : float, default=60.0, 400.0
+        Fallback F0 search range when sex is unknown.
+    f0_range_m, f0_range_f : tuple of float
+        Sex-specific F0 search ranges.
+    sex_col : int, default=1
+        Column index containing the sex label.
+    enabled : bool, default=True
+        Whether this extractor should append features.
+    cache_disabled : bool, default=False
+        Whether to bypass the feature cache.
+    use_f0_iqr, use_f0_range, use_ppe, use_nan_rate, use_pitch_diff_std : bool
+        Per-feature switches.
     """
 
     def __init__(
@@ -680,7 +813,18 @@ class F0DerivativesExtractor(FeatureExtractor):
         return features[mask]
 
     def transform(self, X: np.ndarray) -> np.ndarray:
-        """Sex-aware override."""
+        """Append F0-derived features using sex-specific F0 ranges.
+
+        Parameters
+        ----------
+        X : numpy.ndarray
+            Input rows. Column 0 must contain the waveform.
+
+        Returns
+        -------
+        numpy.ndarray
+            Rows with selected F0-derived features appended.
+        """
         if not self.enabled:
             return X
         X_out = []
@@ -713,33 +857,31 @@ class F0DerivativesExtractor(FeatureExtractor):
 
 
 class NonlinearExtractor(FeatureExtractor):
-    """
-    Nonlinear-dynamics features for sustained-vowel analysis.
+    """Extract nonlinear dynamics features for sustained vowels.
 
-    Features (in order):
-        rqa_rr   - Recurrence Rate
-        rqa_det  - Determinism
-        rqa_lam  - Laminarity
-        rpde     - Recurrence Period Density Entropy
-        dfa      - Detrended Fluctuation Analysis exponent
-        sampen   - Sample Entropy (m=2)
+    Available features are recurrence rate, determinism, laminarity,
+    recurrence period density entropy, detrended fluctuation analysis exponent,
+    and sample entropy.
 
-    All features are computed after normalising the signal to
-    zero-mean / unit-variance, making them gain-independent.
-
-    The signal is internally downsampled to 8 kHz before computation
-    to keep cost tractable; this preserves all voice-relevant content.
-    RQA is run on a 1000-sample segment to avoid O(N²) blowup.
+    The signal is normalized before feature computation, making the features
+    gain-independent. RQA is run on at most 1000 samples to keep runtime
+    tractable.
 
     Parameters
     ----------
-    rqa_m, rqa_tau, rqa_eps_frac, rqa_lmin
+    sr : int, default=16000
+        Sampling rate in Hz.
+    rqa_m, rqa_tau, rqa_eps_frac, rqa_lmin : int or float
         Embedding and threshold parameters for RQA.
-    rpde_m, rpde_tau, rpde_eps_frac, rpde_T_max
+    rpde_m, rpde_tau, rpde_eps_frac, rpde_T_max : int or float
         Parameters for RPDE.
-    sampen_m, sampen_r
+    sampen_m, sampen_r : int or float
         Template length and tolerance multiplier for sample entropy.
-    use_*
+    enabled : bool, default=True
+        Whether this extractor should append features.
+    cache_disabled : bool, default=False
+        Whether to bypass the feature cache.
+    use_rqa_rr, use_rqa_det, use_rqa_lam, use_rpde, use_dfa, use_sampen : bool
         Per-feature enable switches.
     """
 
@@ -803,7 +945,7 @@ class NonlinearExtractor(FeatureExtractor):
         step = max(1, sr // 8000)
         xs = _normalise(x[::step])
 
-        # RQA on a short segment (O(N²) cost)
+        # RQA on a short segment (O(N^2) cost)
         seg_len = min(len(xs), 1000)
         rr, det, lam = _rqa_features(xs[:seg_len], m=rqa_m, tau=rqa_tau, eps_frac=rqa_eps_frac, lmin=rqa_lmin)
 
@@ -856,30 +998,32 @@ class NonlinearExtractor(FeatureExtractor):
 
 
 class VocalTractExtractor(FeatureExtractor):
-    """
-    Vocal-tract area-function features for sustained-vowel analysis.
+    """Extract vocal-tract area-function features.
 
-    The vocal tract is modelled as p cylindrical tubes via linear
-    prediction (LP).  For healthy phonation the LP coefficients -
-    and thus the area function - are stable across frames.
-    Pathological phonation introduces frame-to-frame variability
-    captured by the statistics below.
-
-    Each frame is normalised to unit energy before LP analysis so
-    results are gain-independent and robust across microphones.
-
-    Features (total = 3 * (lp_order + 1)):
-        vt_var_k        - variance of area_k across frames
-        vt_ratio_var_k  - var(area_k) / mean(area_k)          (coefficient of variation)
-        vt_kurtosis_k   - excess kurtosis of area_k across frames
+    The vocal tract is modelled as cylindrical tubes via linear prediction.
+    Frame-to-frame variability in the area function is summarized with
+    variance, normalized variance, and kurtosis.
 
     Parameters
     ----------
-    lp_order  : LP model order (default 12, standard for 8 kHz speech)
-    frame_ms  : analysis frame length in milliseconds
-    hop_ms    : frame hop in milliseconds
-    use_var, use_ratio_var, use_kurtosis
-        Per-feature-group enable switches.
+    sr : int, default=16000
+        Sampling rate in Hz.
+    lp_order : int, default=12
+        Linear prediction model order.
+    frame_ms : float, default=25.0
+        Analysis frame length in milliseconds.
+    hop_ms : float, default=10.0
+        Frame hop in milliseconds.
+    enabled : bool, default=True
+        Whether this extractor should append features.
+    cache_disabled : bool, default=False
+        Whether to bypass the feature cache.
+    use_var, use_ratio_var, use_kurtosis : bool, default=True
+        Per-feature-group switches.
+
+    Notes
+    -----
+    The full feature vector has ``3 * (lp_order + 1)`` values.
     """
 
     def __init__(

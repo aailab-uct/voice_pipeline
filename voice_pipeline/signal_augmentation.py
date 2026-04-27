@@ -1,40 +1,8 @@
-"""Signal (waveform)-level augmenters.
+"""Signal-level waveform augmentation.
 
-Two public classes
-------------------
-RawAugmenter
-    sklearn Transformer - modifies every sample during transform().
-    Applied to both train AND test folds (shape-preserving).
-    Place before feature extractors.
-
-WaveformSynthesizer
-    imblearn Sampler - generates n_samples brand-new rows by augmenting
-    existing waveforms.  Called by ImbPipeline only on the TRAIN fold,
-    so synthetic audio NEVER reaches the classifier as test data.
-    Place before feature extractors (after RawAugmenter).
-
-Available augmentation techniques (shared by both classes)
-----------------------------------------------------------
-Waveform domain:
-    noise           Additive Gaussian white noise.
-    gain            Random amplitude scaling (uniform range).
-    polarity        Polarity inversion - flip sign of the whole signal.
-                    Applied randomly with 50 % probability.
-    time_crop       Random crop to [crop_min_frac ... 1.0] of the original
-                    length, zero-padded back to original length.
-
-Pitch / tempo:
-    pitch_shift     Shift pitch by a random number of semitones without
-                    changing duration.  Requires librosa.
-    time_stretch    Speed up / slow down without changing pitch.
-                    Requires librosa.
-
-Environment / codec:
-    reverb          Convolve with a synthetic exponential room impulse
-                    response (RIR) to simulate room acoustics.
-    codec           mu-law encode -> quantise to 8 bit -> decode.
-                    Simulates telephone / low-bitrate codec artefacts.
-
+The module provides two pipeline components: ``RawAugmenter`` modifies each
+existing waveform, and ``WaveformSynthesizer`` creates additional training
+rows by augmenting selected waveforms.
 """
 
 from __future__ import annotations
@@ -71,7 +39,39 @@ def _augment_waveform(
     reverb_decay: float,
     n_augmentations: int | None,
 ) -> np.ndarray:
-    """Apply all enabled augmentations to a single 1-D waveform."""
+    """Apply enabled augmentations to one waveform.
+
+    Parameters
+    ----------
+    x : numpy.ndarray
+        Input one-dimensional waveform.
+    sr : int
+        Sampling rate in Hz.
+    rng : numpy.random.RandomState
+        Random number generator.
+    noise, gain, polarity, time_crop, pitch_shift, time_stretch, reverb, codec : bool
+        Switches for individual augmentation methods.
+    noise_std : float
+        Standard deviation of additive Gaussian noise.
+    gain_min, gain_max : float
+        Lower and upper gain multiplier.
+    crop_min_frac : float
+        Minimum fraction of the waveform retained by random cropping.
+    pitch_semitones_range : tuple of float
+        Inclusive range of pitch shifts in semitones.
+    stretch_rate_range : tuple of float
+        Range of time-stretch rates.
+    reverb_decay : float
+        Exponential decay used for the synthetic room impulse response.
+    n_augmentations : int or None
+        Number of enabled methods to sample. ``None`` applies all enabled
+        methods.
+
+    Returns
+    -------
+    numpy.ndarray
+        Augmented waveform with the original length.
+    """
 
     x = np.asarray(x, dtype=np.float32).copy()
     original_len = len(x)
@@ -187,7 +187,18 @@ _AUG_DEFAULTS = dict(
 
 
 def _aug_kwargs(self) -> dict:
-    """Collect augmentation parameters from an instance into a dict for _augment_waveform."""
+    """Collect augmentation parameters from an augmenter instance.
+
+    Parameters
+    ----------
+    self : object
+        ``RawAugmenter`` or ``WaveformSynthesizer`` instance.
+
+    Returns
+    -------
+    dict
+        Keyword arguments for :func:`_augment_waveform`.
+    """
     return dict(
         sr=self.sr,
         noise=self.noise,
@@ -215,40 +226,38 @@ def _aug_kwargs(self) -> dict:
 
 
 class RawAugmenter(BaseEstimator, TransformerMixin):
-    """Waveform-level augmentation applied to every sample in transform().
+    """Apply waveform augmentation to every row.
 
     This is a standard sklearn Transformer, so it is called on BOTH the
-    train and test folds.  It does NOT change the number of rows - it only
-    modifies the waveform in column 0 of each row in-place.
-
-    Fully backwards-compatible with the original two-parameter version
-    (noise_std, gain_min, gain_max still work unchanged).
+    train and test folds. It does not change the number of rows. It only
+    modifies the waveform in column 0 of each row.
 
     Parameters
     ----------
-    enabled : bool
-        Master switch.  When False returns X unchanged.
-    sr : int
-        Sample rate.  Required for pitch_shift, time_stretch, and reverb.
+    enabled : bool, default=True
+        Whether to apply augmentation.
+    sr : int, default=50000
+        Sampling rate in Hz. Required for pitch shift, time stretch, and
+        reverb.
     noise, gain, polarity, time_crop, pitch_shift, time_stretch,
     reverb, codec : bool
-        Per-technique enable flags.  See module docstring for details.
-    noise_std : float
-        Std of additive Gaussian noise.
-    gain_min, gain_max : float
+        Per-method enable flags.
+    noise_std : float, default=0.005
+        Standard deviation of additive Gaussian noise.
+    gain_min, gain_max : float, default=0.8, 1.2
         Uniform range for amplitude scaling.
-    crop_min_frac : float
+    crop_min_frac : float, default=0.8
         Minimum fraction of signal retained by time_crop.
-    pitch_semitones_range : (float, float)
-        (min, max) semitones for pitch_shift.
-    stretch_rate_range : (float, float)
-        (min, max) rate for time_stretch (>1 faster, <1 slower).
-    reverb_decay : float
+    pitch_semitones_range : tuple of float, default=(-2.0, 2.0)
+        Minimum and maximum semitones for pitch_shift.
+    stretch_rate_range : tuple of float, default=(0.9, 1.1)
+        Minimum and maximum rate for time_stretch.
+    reverb_decay : float, default=10.0
         Exponential decay coefficient for the synthetic RIR.
-    n_augmentations : int or None
-        If set, randomly pick this many techniques from the enabled ones
-        for each sample.  None = apply all enabled techniques (default).
-    random_state : int or None
+    n_augmentations : int or None, default=None
+        If set, randomly pick this many enabled methods for each sample.
+        ``None`` applies all enabled methods.
+    random_state : int or None, default=None
         Seed for reproducibility.
     """
 
@@ -300,7 +309,18 @@ class RawAugmenter(BaseEstimator, TransformerMixin):
         return self
 
     def transform(self, X: np.ndarray) -> np.ndarray:
-        """Apply augmentation to every row.  Column 0 is the waveform."""
+        """Apply augmentation to every row.
+
+        Parameters
+        ----------
+        X : numpy.ndarray
+            Input rows. Column 0 must contain the waveform.
+
+        Returns
+        -------
+        numpy.ndarray
+            Rows with augmented waveforms.
+        """
         if not self.enabled:
             return X
         kwargs = _aug_kwargs(self)
@@ -318,12 +338,11 @@ class RawAugmenter(BaseEstimator, TransformerMixin):
 
 
 class WaveformSynthesizer(BaseSampler):
-    """Imblearn-compatible sampler that synthesises new waveform rows.
+    """Create additional waveform rows for the training fold.
 
     Because this class inherits from BaseSampler and is placed inside an
     ImbPipeline, its fit_resample() is called ONLY on the training fold.
-    Synthetic audio therefore NEVER reaches the test fold or the
-    classifier as evaluation data.
+    Synthetic audio therefore never reaches the evaluation fold.
 
     The synthesizer picks existing waveforms at random (with replacement),
     augments each one, and appends the result as a new row.  Demographic
@@ -334,21 +353,25 @@ class WaveformSynthesizer(BaseSampler):
 
     Parameters
     ----------
-    enabled : bool
-        Master switch.  When False returns X, y unchanged.
-    n_samples : int
-        Total number of NEW rows to add across all classes.
+    enabled : bool, default=False
+        Whether to synthesize new waveform rows.
+    n_samples : int, default=0
+        Total number of new rows to add across all classes.
         Set to 0 to effectively disable without changing enabled flag.
-    sr : int
-        Sample rate.  Required for pitch_shift, time_stretch, and reverb.
+    sr : int, default=50000
+        Sampling rate in Hz. Required for pitch_shift, time_stretch, and
+        reverb.
     noise, gain, polarity, time_crop, pitch_shift, time_stretch,
     reverb, codec : bool
-        Per-technique flags - same semantics as RawAugmenter.
-    n_augmentations : int or None
-        If set, randomly pick this many techniques from the enabled ones
-        for each synthetic sample.  None = apply all enabled techniques.
-    (all other parameters identical to RawAugmenter)
-    random_state : int or None
+        Per-method enable flags.
+    noise_std, gain_min, gain_max, crop_min_frac, reverb_decay : float
+        Numeric augmentation parameters.
+    pitch_semitones_range, stretch_rate_range : tuple of float
+        Ranges used by pitch and tempo augmentation.
+    n_augmentations : int or None, default=None
+        If set, randomly pick this many enabled methods for each synthetic
+        sample. ``None`` applies all enabled methods.
+    random_state : int or None, default=None
         Seed for reproducibility.
     """
 

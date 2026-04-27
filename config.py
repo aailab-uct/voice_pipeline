@@ -3,9 +3,9 @@
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.feature_selection import SelectKBest, mutual_info_classif, SelectFromModel, RFECV
 from sklearn.model_selection import StratifiedGroupKFold
-from oversampling import SMOTESampler, VAESampler
+from voice_pipeline.sampling import SMOTESampler, VAESampler
 
-from custom_classifiers import KANClassifier
+from voice_pipeline.classifiers import KANClassifier
 
 sampling_rate = 48000
 
@@ -15,11 +15,10 @@ config = {
     # ------------------------------------------------------------------
     "experiment_name": "afthermath_only_svd",
     "experiment_description": "first try afther repair of nsp to wav conversion error",
-
     # ------------------------------------------------------------------
     # Dataset
     # ------------------------------------------------------------------
-    "selected_datasets": {"SVD"},       # "SVD" | "AVFAD"
+    "selected_datasets": {"SVD"},  # "SVD" | "AVFAD"
     "selected_fs": sampling_rate,
     "allowed_vowels": {"a"},
     "allowed_intonations": {"n"},
@@ -33,7 +32,6 @@ config = {
         "Non-fluency-Syndrom",
         "Mutatio",
     },
-
     # ------------------------------------------------------------------
     # Cross-validation & scoring
     # ------------------------------------------------------------------
@@ -42,7 +40,6 @@ config = {
     "refit_metric": "uar",
     "plot_uar_per_pathology": True,
     "plot_feature_histograms": False,
-
     # ------------------------------------------------------------------
     # Pipeline
     # ------------------------------------------------------------------
@@ -51,35 +48,28 @@ config = {
         "raw_aug__enabled": False,
         "raw_aug__noise_std": 0.005,
         "raw_aug__random_state": 42,
-
         # Feature extractors
         "mfcc__enabled": False,
         "mfcc__sr": sampling_rate,
         "mfcc__n_mfcc": 20,
-
         "timedomain__enabled": True,
         "timedomain__sr": sampling_rate,
         "timedomain__use_zcr": False,
         "timedomain__use_entropy": False,
         "timedomain__use_skewness": False,
         "timedomain__use_diff_pitch": False,
-
         "zcr__enabled": False,
         "zcr__sr": sampling_rate,
-
         "spectral__enabled": True,
         "spectral__sr": sampling_rate,
-
         "opensmile__enabled": False,
         "opensmile__sr": sampling_rate,
-        "opensmile__feature_set": "GeMAPS",       # "GeMAPS" | "ComParE_2016"
+        "opensmile__feature_set": "GeMAPS",  # "GeMAPS" | "ComParE_2016"
         "opensmile__feature_level": "functionals",
-
         # Feature augmentation (after extraction, before resampling)
         "feat_aug__enabled": False,
         "feat_aug__std_factor": 0.01,
         "feat_aug__random_state": 42,
-
         # Feature selection
         "selector__enabled": False,
         "selector__instance": SelectKBest(score_func=mutual_info_classif, k=20),
@@ -91,15 +81,12 @@ config = {
         #     estimator=RandomForestClassifier(n_estimators=300, random_state=42, n_jobs=-1, class_weight="balanced"),
         #     step=0.1, cv=5, scoring="balanced_accuracy", n_jobs=-1,
         # ),
-
         # Resampling
         "resampler": SMOTESampler(enabled=True, random_state=42, artificial_only=False, sampling_strategy="auto"),
         # "resampler": VAESampler(enabled=True, random_state=42, artificial_only=False, sampling_strategy="auto"),
-
         # Classifier
         "clf": RandomForestClassifier(random_state=42, n_jobs=-1),
     },
-
     # ------------------------------------------------------------------
     # Grid search
     # ------------------------------------------------------------------

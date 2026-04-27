@@ -1,3 +1,6 @@
 [tool.black]
 target-version = ["py312", "py314"]
 line-length = 120
+
+[tool.pyright]
+reportIncompatibleMethodOverride = "warning"

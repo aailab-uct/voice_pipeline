@@ -1,5 +1,7 @@
-"""Module for preprocessing raw datasets into a standardized format.
-- normalization metrics on raw signal are finalized only on SVD and AVFAD datasets
+"""Preprocess raw voice datasets into one standardized dataset.
+
+The output is a shared metadata CSV plus WAV files in ``dataset/``. Signal
+normalization metrics are currently finalized only for SVD and AVFAD.
 """
 
 # ============================================================
@@ -58,8 +60,17 @@ MIN_AGE = 18
 
 
 def is_adult(age) -> bool:
-    """
-    Return True if age is >= MIN_AGE
+    """Check whether a participant is an adult.
+
+    Parameters
+    ----------
+    age : object
+        Age value that can be converted to ``float``.
+
+    Returns
+    -------
+    bool
+        ``True`` if ``age`` is greater than or equal to ``MIN_AGE``.
     """
     return float(age) >= MIN_AGE
 
@@ -77,9 +88,18 @@ DEFAULT_F0_RANGE = (60.0, 250.0)  # TODO: Why? this makes litlle sense if m star
 
 
 def normalize_sex_mf(value):  # TODO: duplicate code of feature_extraction.py
-    """
-    Normalize sex/gender to 'm' or 'f'.
-    Returns None if unknown.
+    """Normalize a sex label to ``"m"`` or ``"f"``.
+
+    Parameters
+    ----------
+    value : object
+        Original sex or gender label from a source dataset.
+
+    Returns
+    -------
+    str or None
+        ``"m"`` for male labels, ``"f"`` for female labels, and ``None`` if
+        the label is unknown.
     """
     if value is None:
         return None
@@ -219,9 +239,22 @@ def rms_normalize(x: np.ndarray) -> np.ndarray:
 
 
 def preprocess_signal(x: np.ndarray, fs: int) -> np.ndarray:
-    """
-    Obecný preprocessing (SVD, VOICED, PVQD):
-    mono -> DC removal -> trim okrajů -> RMS normalizace.
+    """Preprocess a sustained-vowel signal.
+
+    The sequence is mono conversion, DC removal, edge trimming, and RMS
+    normalization. It is used for SVD, VOICED, and PVQD.
+
+    Parameters
+    ----------
+    x : numpy.ndarray
+        Input waveform.
+    fs : int
+        Sampling rate in Hz.
+
+    Returns
+    -------
+    numpy.ndarray
+        Preprocessed mono waveform as ``float32``.
     """
     x = np.asarray(x, dtype=np.float32)
     if x.ndim == 2:
@@ -233,9 +266,24 @@ def preprocess_signal(x: np.ndarray, fs: int) -> np.ndarray:
 
 
 def preprocess_avfad_signal(x: np.ndarray, fs: int, crop_to_one_rep: bool = True) -> np.ndarray:
-    """
-    AVFAD preprocessing:
-    mono -> DC removal -> crop 1. repetice -> trim okrajů -> RMS normalizace.
+    """Preprocess an AVFAD sustained-vowel signal.
+
+    The sequence is mono conversion, DC removal, optional crop to the first
+    repetition, edge trimming, and RMS normalization.
+
+    Parameters
+    ----------
+    x : numpy.ndarray
+        Input waveform.
+    fs : int
+        Sampling rate in Hz.
+    crop_to_one_rep : bool, default=True
+        Whether to keep only the first detected vowel repetition.
+
+    Returns
+    -------
+    numpy.ndarray
+        Preprocessed mono waveform as ``float32``.
     """
     x = np.asarray(x, dtype=np.float32)
     if x.ndim == 2:
@@ -297,10 +345,23 @@ def normalize_pvqd_pathology(value):
 
 
 def pvqd_is_a_vowel_file(fname: str, participant_id: str) -> bool:
-    """
-    Heuristic: filename must contain participant_id and an 'a' token.
-    Works for common patterns like:
-      BL01_a.wav, BL01-a.wav, BL01_vowel_a.wav, BL01_A.wav
+    """Check whether a PVQD file appears to contain vowel ``a``.
+
+    The heuristic requires the filename to contain the participant identifier
+    and an ``a`` token. It supports common names such as ``BL01_a.wav``,
+    ``BL01-a.wav``, ``BL01_vowel_a.wav``, and ``BL01_A.wav``.
+
+    Parameters
+    ----------
+    fname : str
+        Filename to check.
+    participant_id : str
+        Participant identifier expected in the filename.
+
+    Returns
+    -------
+    bool
+        ``True`` if the filename looks like a vowel-a recording.
     """
     # TODO: ta db je doopravdy tak spatne oanotovana ze je treba tolik kroku?
     f = fname.lower()
@@ -348,7 +409,7 @@ def process_pvqd_file(wav_path: Path, src_row: dict, writer, record_idx: int) ->
     row = {
         "id": record_id,
         "sessionid": None,
-        "talkerid": f"PVQD_{src_row.get("participant_id")}",
+        "talkerid": f"PVQD_{src_row.get('participant_id')}",
         "talkersex": sex_mf,
         "age": src_row.get("age"),
         "pathologies": normalize_pvqd_pathology(src_row.get("diagnosis")),
@@ -454,7 +515,7 @@ def process_svd_file(nsp_path: Path, metadata, writer, record_idx):
     row = {
         "id": record_id,
         "sessionid": src.get("sessionid"),
-        "talkerid": f"SVD_{src.get("talkerid")}",
+        "talkerid": f"SVD_{src.get('talkerid')}",
         "talkersex": sex_mf,
         "age": src.get("talkerage"),
         "pathologies": normalize_pathology(src.get("pathologies")),
@@ -629,7 +690,7 @@ def process_avfad_file(wav_path: Path, src_row: dict, vowel: str, writer, record
     row = {
         "id": record_id,
         "sessionid": None,
-        "talkerid": f"AVFAD_{src_row.get("file_id")}",
+        "talkerid": f"AVFAD_{src_row.get('file_id')}",
         "talkersex": sex_mf,
         "age": src_row.get("age"),
         "pathologies": p,
