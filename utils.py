@@ -1,3 +1,5 @@
+"""Utility functions and classes for the project."""
+
 from tqdm import tqdm
 import sys
 from contextlib import contextmanager
@@ -5,6 +7,7 @@ from pathlib import Path
 from sklearn.base import BaseEstimator, TransformerMixin
 import numpy as np
 import math
+
 
 class ReplaceNaN(BaseEstimator, TransformerMixin):
     """
@@ -18,6 +21,7 @@ class ReplaceNaN(BaseEstimator, TransformerMixin):
     def transform(self, X):
         X = np.asarray(X, dtype=np.float32)
         return np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
+
 
 @contextmanager
 def tqdm_from_verbose(total, desc="GridSearch", unit="fit"):
@@ -59,6 +63,7 @@ def tqdm_from_verbose(total, desc="GridSearch", unit="fit"):
     finally:
         sys.stdout = old_stdout
         pbar.close()
+
 
 def _floor_power_of_2(n: int) -> int:
     """
@@ -123,10 +128,10 @@ def log_cv_class_distribution(
         label_names = {0: "healthy", 1: "pathological"}
 
     healthy_label = next(k for k, v in label_names.items() if v == "healthy")
-    patho_label   = next(k for k, v in label_names.items() if v == "pathological")
+    patho_label = next(k for k, v in label_names.items() if v == "pathological")
 
     lines = []
-    header = f"{'Fold':<6} {'Split':<8} {'Healthy':>10} {'Pathological':>14} {'Total':>8} {'Ratio H:P':>12}"
+    header = f"{"Fold":<6} {"Split":<8} {"Healthy":>10} {"Pathological":>14} {"Total":>8} {"Ratio H:P":>12}"
     lines.append(header)
     lines.append("-" * len(header))
 
@@ -136,22 +141,20 @@ def log_cv_class_distribution(
     for fold, (tr, te) in enumerate(cv.split(X_dummy, y, groups)):
         for split_name, idx in [("train", tr), ("test", te)]:
             n_healthy = int((y[idx] == healthy_label).sum())
-            n_patho   = int((y[idx] == patho_label).sum())
-            total     = len(idx)
-            ratio     = f"{n_healthy}:{n_patho}"
-            lines.append(
-                f"{fold:<6} {split_name:<8} {n_healthy:>10} {n_patho:>14} {total:>8} {ratio:>12}"
-            )
+            n_patho = int((y[idx] == patho_label).sum())
+            total = len(idx)
+            ratio = f"{n_healthy}:{n_patho}"
+            lines.append(f"{fold:<6} {split_name:<8} {n_healthy:>10} {n_patho:>14} {total:>8} {ratio:>12}")
 
     # overall summary
     lines.append("-" * len(header))
     n_healthy_total = int((y == healthy_label).sum())
-    n_patho_total   = int((y == patho_label).sum())
+    n_patho_total = int((y == patho_label).sum())
     lines.append(
-        f"{'ALL':<6} {'total':<8} {n_healthy_total:>10} {n_patho_total:>14}"
+        f"{"ALL":<6} {"total":<8} {n_healthy_total:>10} {n_patho_total:>14}"
         f" {len(y):>8} {n_healthy_total}:{n_patho_total:>1}"
     )
 
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text("\n".join(lines) + "\n")
+    output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")

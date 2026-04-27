@@ -3,10 +3,13 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
-from sklearn.base import clone
 import pandas as pd
+from sklearn.base import clone
 from sklearn.metrics import recall_score, confusion_matrix, roc_curve, roc_auc_score
 from imblearn.pipeline import Pipeline as ImbPipeline
+
+
+STEPS_TO_EXCLUDE = {"selector", "feat_aug", "resampler", "clf"}  # TODO what this does?
 
 
 def per_pathology_recall(y_true, y_pred, pathologies, healthy_name="healthy", min_samples=3):
@@ -187,12 +190,15 @@ def plot_roc_curve(best_estimator, X, y, groups, cv, run_dir):
     std_auc = np.std(aucs)
 
     fig, ax = plt.subplots(figsize=(6, 5))
-    ax.plot(mean_fpr, mean_tpr, color="#1D9E75",
-            label=f"Mean ROC (AUC = {mean_auc:.3f} ± {std_auc:.3f})", lw=2)
-    ax.fill_between(mean_fpr,
-                    np.clip(mean_tpr - std_tpr, 0, 1),
-                    np.clip(mean_tpr + std_tpr, 0, 1),
-                    alpha=0.15, color="#1D9E75", label="± 1 std")
+    ax.plot(mean_fpr, mean_tpr, color="#1D9E75", label=f"Mean ROC (AUC = {mean_auc:.3f} ± {std_auc:.3f})", lw=2)
+    ax.fill_between(
+        mean_fpr,
+        np.clip(mean_tpr - std_tpr, 0, 1),
+        np.clip(mean_tpr + std_tpr, 0, 1),
+        alpha=0.15,
+        color="#1D9E75",
+        label="± 1 std",
+    )
     ax.plot([0, 1], [0, 1], "k--", lw=1, label="Random classifier")
 
     ax.set_xlabel("1 - Specificity (FPR)", fontsize=10)
@@ -204,11 +210,13 @@ def plot_roc_curve(best_estimator, X, y, groups, cv, run_dir):
     fig.savefig(run_dir / "roc_curve.png", dpi=200, bbox_inches="tight")
     plt.close(fig)
 
-    pd.DataFrame({
-        "fpr": mean_fpr,
-        "tpr_mean": mean_tpr,
-        "tpr_std": std_tpr,
-    }).to_csv(run_dir / "roc_data.csv", index=False)
+    pd.DataFrame(
+        {
+            "fpr": mean_fpr,
+            "tpr_mean": mean_tpr,
+            "tpr_std": std_tpr,
+        }
+    ).to_csv(run_dir / "roc_data.csv", index=False)
 
 
 def plot_feature_histograms(pipe, X, datasets, run_dir):
@@ -232,7 +240,6 @@ def plot_feature_histograms(pipe, X, datasets, run_dir):
     hist_dir_pre.mkdir(exist_ok=True)
     hist_dir_post.mkdir(exist_ok=True)
 
-    STEPS_TO_EXCLUDE = {"selector", "feat_aug", "resampler", "clf"}
     pre_steps, post_steps = [], []
     scaler_seen = False
     for name, step in pipe.steps:
@@ -290,10 +297,10 @@ def run_visualizations(config, best_estimator, X, y, groups, pathologies, datase
     ----------
     config : dict
         Experiment configuration. Recognized keys:
-            ``plot_recall_per_pathology`` – bool, generate Recall per pathology plots (default: True)
-            ``plot_roc_curve``            – bool, generate ROC curve plot (default: True)
-            ``plot_feature_histograms``   – bool, generate feature histograms (default: False)
-            ``min_pathology_samples``     – int, min samples per pathology to include (default: 3)
+            ``plot_recall_per_pathology`` - bool, generate Recall per pathology plots (default: True)
+            ``plot_roc_curve``            - bool, generate ROC curve plot (default: True)
+            ``plot_feature_histograms``   - bool, generate feature histograms (default: False)
+            ``min_pathology_samples``     - int, min samples per pathology to include (default: 3)
     best_estimator : fitted sklearn estimator
         Best estimator returned by GridSearchCV. Used directly to predict the full dataset.
     X : np.ndarray
@@ -313,14 +320,14 @@ def run_visualizations(config, best_estimator, X, y, groups, pathologies, datase
 
     Output files
     ------------
-    per_pathology_recall_all.csv  – Recall for all pathologies (with >= min_samples)
-    recall_all.png                – bar plot of Recall for all pathologies
-    per_pathology_recall_weak.csv – Recall for pathologies below median Recall
-    recall_weak.png               – bar plot of weak pathologies only
-    roc_curve.png                 – mean ROC curve with std band across CV folds (if enabled)
-    roc_data.csv                  – numerical ROC curve data for re-plotting (if enabled)
-    histograms_pre_scaling/       – per-feature histograms before scaling (if enabled)
-    histograms_post_scaling/      – per-feature histograms after scaling (if enabled)
+    per_pathology_recall_all.csv  - Recall for all pathologies (with >= min_samples)
+    recall_all.png                - bar plot of Recall for all pathologies
+    per_pathology_recall_weak.csv - Recall for pathologies below median Recall
+    recall_weak.png               - bar plot of weak pathologies only
+    roc_curve.png                 - mean ROC curve with std band across CV folds (if enabled)
+    roc_data.csv                  - numerical ROC curve data for re-plotting (if enabled)
+    histograms_pre_scaling/       - per-feature histograms before scaling (if enabled)
+    histograms_post_scaling/      - per-feature histograms after scaling (if enabled)
     """
     if config.get("plot_recall_per_pathology", True):
         min_samples = config.get("min_pathology_samples", 3)

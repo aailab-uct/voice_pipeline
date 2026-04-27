@@ -19,8 +19,8 @@ from sklearn.metrics import (
     balanced_accuracy_score,
     confusion_matrix,
     roc_auc_score,
-    roc_curve,
 )
+from sklearn.ensemble import RandomForestClassifier
 
 from imblearn.pipeline import Pipeline as ImbPipeline
 import pandas as pd
@@ -35,20 +35,20 @@ from feature_extraction import (
     OpenSmileExtractor,
     F0DerivativesExtractor,
     NonlinearExtractor,
-    VocalTractExtractor
+    VocalTractExtractor,
 )
 from signal_augmenters import RawAugmenter, WaveformSynthesizer
 from feature_augmenters import FeatureAugmenter
 from oversampling import SMOTESampler
 from dataset_filtration import build_dataset
-from sklearn.ensemble import RandomForestClassifier
-from utils import (tqdm_from_verbose, ReplaceNaN, log_cv_class_distribution)
+from utils import tqdm_from_verbose, ReplaceNaN, log_cv_class_distribution
 
 import warnings
 
 # shouldnt have impact on calculations
 warnings.filterwarnings("ignore", message="All-NaN slice encountered")
 warnings.filterwarnings("ignore", message="R^2 score is not well-defined with less than two samples")
+
 
 # ==========
 # 1) Build imblearn pipeline
@@ -58,20 +58,20 @@ def build_pipeline(pipeline_params: dict | None = None, random_state: int = 42) 
     Build an imblearn pipeline for voice pathology classification.
 
     Pipeline steps (in order):
-        raw_aug      – waveform augmentation; modifies every sample (train + test)
-        synthesizer  – waveform synthesis; adds n_samples new rows (train only)
-        mfcc         – MFCC feature extraction
-        timedomain   – time-domain features (F0, jitter, shimmer, HNR, …)
-        zcr          – zero-crossing rate
-        spectral     – spectral features (flatness, rolloff, centroid, contrast)
-        opensmile    – OpenSMILE feature extraction (disabled by default)
-        drop_sig     – drops raw signal column after feature extraction
-        replace_nan  – replaces NaN / ±Inf with 0.0
-        scaler       – StandardScaler
-        selector     – optional feature selection (default: passthrough)
-        feat_aug     – feature-space Gaussian jitter (train + test)
-        resampler    – SMOTE / VAE oversampling (train only)
-        clf          – classifier (default: RandomForestClassifier)
+        raw_aug      - waveform augmentation; modifies every sample (train + test)
+        synthesizer  - waveform synthesis; adds n_samples new rows (train only)
+        mfcc         - MFCC feature extraction
+        timedomain   - time-domain features (F0, jitter, shimmer, HNR, …)
+        zcr          - zero-crossing rate
+        spectral     - spectral features (flatness, rolloff, centroid, contrast)
+        opensmile    - OpenSMILE feature extraction (disabled by default)
+        drop_sig     - drops raw signal column after feature extraction
+        replace_nan  - replaces NaN / ±Inf with 0.0
+        scaler       - StandardScaler
+        selector     - optional feature selection (default: passthrough)
+        feat_aug     - feature-space Gaussian jitter (train + test)
+        resampler    - SMOTE / VAE oversampling (train only)
+        clf          - classifier (default: RandomForestClassifier)
 
     Synthetic audio safety
     ----------------------
@@ -92,10 +92,10 @@ def build_pipeline(pipeline_params: dict | None = None, random_state: int = 42) 
     pipeline_params : dict, optional
         Flat sklearn-style parameter dict passed to ``pipe.set_params()``.
         Special keys (handled before set_params, not forwarded):
-            ``selector__instance``    – feature selector object
-            ``selector__enabled``     – if False, selector → passthrough
-            ``clf__instance``         – classifier object
-            ``synthesizer__instance`` – WaveformSynthesizer object
+            ``selector__instance``    - feature selector object
+            ``selector__enabled``     - if False, selector → passthrough
+            ``clf__instance``         - classifier object
+            ``synthesizer__instance`` - WaveformSynthesizer object
     random_state : int, optional
         Random state forwarded to all stochastic steps. Default: 42.
 
@@ -112,43 +112,44 @@ def build_pipeline(pipeline_params: dict | None = None, random_state: int = 42) 
     # computed from the un-augmented originals.
     _raw_aug_on = pipeline_params.get("raw_aug__enabled", False)
     _synth_on = (
-        pipeline_params.get("synthesizer__enabled", False)
-        and pipeline_params.get("synthesizer__n_samples", 0) > 0
+        pipeline_params.get("synthesizer__enabled", False) and pipeline_params.get("synthesizer__n_samples", 0) > 0
     )
-    _disable_cache = bool(_raw_aug_on or _synth_on)
+    disable_cache = bool(_raw_aug_on or _synth_on)
 
     pipe = ImbPipeline(
         steps=[
             # --- waveform augmentation (before feature extraction) ---
-            ("raw_aug",     RawAugmenter(random_state=random_state)),
+            ("raw_aug", RawAugmenter(random_state=random_state)),
             # WaveformSynthesizer is an imblearn Sampler: ImbPipeline will
             # call fit_resample() on it, which runs only on the train fold.
             # Placed as a direct step (like resampler) so all parameters
             # are accessible via synthesizer__* in param_grid.
-            ("synthesizer", WaveformSynthesizer(enabled=False, n_samples=0,
-                                                random_state=random_state)),
+            ("synthesizer", WaveformSynthesizer(enabled=False, n_samples=0, random_state=random_state)),
             # --- feature extraction ---
             # cache_disabled is set to True when any waveform augmentation
             # is active so the cache never serves stale features.
-            ("mfcc",        MFCCExtractor(cache_disabled=_disable_cache)),
-            ("timedomain",  TimeDomainFeaturesExtractor(cache_disabled=_disable_cache)),
-            ("zcr",         ZCRExtractor(cache_disabled=_disable_cache)),
-            ("spectral",    SpectralFeaturesExtractor(cache_disabled=_disable_cache)),
-            ("f0deriv", F0DerivativesExtractor(cache_disabled=_disable_cache)),
-            ("nonlinear", NonlinearExtractor(cache_disabled=_disable_cache)),
-            ("vocaltract", VocalTractExtractor(cache_disabled=_disable_cache)),
-            ("opensmile",   OpenSmileExtractor(cache_disabled=_disable_cache)),
+            ("mfcc", MFCCExtractor(cache_disabled=disable_cache)),
+            ("timedomain", TimeDomainFeaturesExtractor(cache_disabled=disable_cache)),
+            ("zcr", ZCRExtractor(cache_disabled=disable_cache)),
+            ("spectral", SpectralFeaturesExtractor(cache_disabled=disable_cache)),
+            ("f0deriv", F0DerivativesExtractor(cache_disabled=disable_cache)),
+            ("nonlinear", NonlinearExtractor(cache_disabled=disable_cache)),
+            ("vocaltract", VocalTractExtractor(cache_disabled=disable_cache)),
+            ("opensmile", OpenSmileExtractor(cache_disabled=disable_cache)),
             # --- post-extraction ---
-            ("drop_sig",    DropSignalColumn()),
+            ("drop_sig", DropSignalColumn()),
             ("replace_nan", ReplaceNaN()),
-            ("scaler",      StandardScaler()),
-            ("selector",    pipeline_params.get("selector__instance", "passthrough")),
-            ("feat_aug",    FeatureAugmenter(random_state=random_state)),
-            ("resampler",   SMOTESampler(random_state=random_state)),
-            ("clf",         pipeline_params.get(
-                                "clf__instance",
-                                RandomForestClassifier(random_state=random_state, n_jobs=-1),
-                            )),
+            ("scaler", StandardScaler()),
+            ("selector", pipeline_params.get("selector__instance", "passthrough")),
+            ("feat_aug", FeatureAugmenter(random_state=random_state)),
+            ("resampler", SMOTESampler(random_state=random_state)),
+            (
+                "clf",
+                pipeline_params.get(
+                    "clf__instance",
+                    RandomForestClassifier(random_state=random_state, n_jobs=-1),
+                ),
+            ),
         ]
     )
 
@@ -182,8 +183,8 @@ def log_results(
 
     Creates a new directory under ``results/<experiment_name>_<timestamp>/``
     containing two files:
-    - ``gridsearch.csv`` – full cv_results as a CSV
-    - ``gridsearch.txt`` – human-readable summary with best UAR/accuracy,
+    - ``gridsearch.csv`` - full cv_results as a CSV
+    - ``gridsearch.txt`` - human-readable summary with best UAR/accuracy,
       hostname, optional description, and configuration dump
 
     Parameters
@@ -247,7 +248,7 @@ def repeated_cv_evaluation(
     Repeated stratified group k-fold evaluation of a fitted estimator.
 
     Each repeat uses a different random_state for the CV split, producing
-    n_repeats × n_splits rows in the output.
+    n_repeats * n_splits rows in the output.
 
     Returns
     -------
@@ -273,7 +274,7 @@ def repeated_cv_evaluation(
 # ==========
 # 3) Main entry point
 # ==========
-def main(config: dict[str, Any] | None = None):
+def main(config: dict[str, Any]):
     """
     Run the pipeline.
     """
@@ -312,13 +313,10 @@ def main(config: dict[str, Any] | None = None):
             "FN": make_scorer(lambda yt, yp: confusion_matrix(yt, yp)[1, 0]),
             "roc_auc": make_scorer(roc_auc_score, response_method="predict_proba"),
         }
-        refit = config.get("refit_metric", False)
     elif scoring_mode == "accuracy_only":
         scoring = "accuracy"
-        refit = True
     elif scoring_mode == "uar_only":
         scoring = "balanced_accuracy"
-        refit = True
     else:
         raise ValueError(f"Unknown scoring_mode: {scoring_mode}")
 
@@ -327,7 +325,7 @@ def main(config: dict[str, Any] | None = None):
         param_grid=param_grid,
         cv=cv,
         scoring=scoring,
-        refit=refit,
+        refit=False,
         verbose=2,
         error_score="raise",
         n_jobs=None,  # -1 causes issues with caching as the forked processes copy the cache.

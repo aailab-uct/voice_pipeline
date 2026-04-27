@@ -3,12 +3,12 @@
 Two public classes
 ------------------
 RawAugmenter
-    sklearn Transformer — modifies every sample during transform().
+    sklearn Transformer - modifies every sample during transform().
     Applied to both train AND test folds (shape-preserving).
     Place before feature extractors.
 
 WaveformSynthesizer
-    imblearn Sampler — generates n_samples brand-new rows by augmenting
+    imblearn Sampler - generates n_samples brand-new rows by augmenting
     existing waveforms.  Called by ImbPipeline only on the TRAIN fold,
     so synthetic audio NEVER reaches the classifier as test data.
     Place before feature extractors (after RawAugmenter).
@@ -18,7 +18,7 @@ Available augmentation techniques (shared by both classes)
 Waveform domain:
     noise           Additive Gaussian white noise.
     gain            Random amplitude scaling (uniform range).
-    polarity        Polarity inversion — flip sign of the whole signal.
+    polarity        Polarity inversion - flip sign of the whole signal.
                     Applied randomly with 50 % probability.
     time_crop       Random crop to [crop_min_frac ... 1.0] of the original
                     length, zero-padded back to original length.
@@ -48,6 +48,7 @@ import librosa
 # ---------------------------------------------------------------------------
 # Core augmentation logic (shared by both classes)
 # ---------------------------------------------------------------------------
+
 
 def _augment_waveform(
     x: np.ndarray,
@@ -79,21 +80,30 @@ def _augment_waveform(
     # the enabled ones and disable the rest for this sample.
     # n_augmentations=None means apply all enabled techniques (original behaviour).
     if n_augmentations is not None:
-        enabled_techniques = [k for k, v in {
-            "noise": noise, "gain": gain, "polarity": polarity,
-            "time_crop": time_crop, "pitch_shift": pitch_shift,
-            "time_stretch": time_stretch, "reverb": reverb, "codec": codec,
-        }.items() if v]
+        enabled_techniques = [
+            k
+            for k, v in {
+                "noise": noise,
+                "gain": gain,
+                "polarity": polarity,
+                "time_crop": time_crop,
+                "pitch_shift": pitch_shift,
+                "time_stretch": time_stretch,
+                "reverb": reverb,
+                "codec": codec,
+            }.items()
+            if v
+        ]
         n_pick = min(n_augmentations, len(enabled_techniques))
         chosen = set(rng.choice(enabled_techniques, size=n_pick, replace=False))
-        noise       = "noise"       in chosen
-        gain        = "gain"        in chosen
-        polarity    = "polarity"    in chosen
-        time_crop   = "time_crop"   in chosen
+        noise = "noise" in chosen
+        gain = "gain" in chosen
+        polarity = "polarity" in chosen
+        time_crop = "time_crop" in chosen
         pitch_shift = "pitch_shift" in chosen
         time_stretch = "time_stretch" in chosen
-        reverb      = "reverb"      in chosen
-        codec       = "codec"       in chosen
+        reverb = "reverb" in chosen
+        codec = "codec" in chosen
 
     # 1. Random gain
     if gain:
@@ -107,20 +117,20 @@ def _augment_waveform(
     if polarity and rng.rand() < 0.5:
         x = -x
 
-    # 4. Time crop — keep a random fraction, zero-pad back to original length
+    # 4. Time crop - keep a random fraction, zero-pad back to original length
     if time_crop:
         keep = int(original_len * rng.uniform(crop_min_frac, 1.0))
         start = rng.randint(0, max(1, original_len - keep))
         buf = np.zeros(original_len, dtype=np.float32)
-        buf[:keep] = x[start: start + keep]
+        buf[:keep] = x[start : start + keep]
         x = buf
 
-    # 5. Pitch shift — shift by random semitones, duration unchanged
+    # 5. Pitch shift - shift by random semitones, duration unchanged
     if pitch_shift:
         n_steps = rng.uniform(*pitch_semitones_range)
         x = librosa.effects.pitch_shift(x.astype(np.float64), sr=sr, n_steps=n_steps).astype(np.float32)
 
-    # 6. Time stretch — speed up/slow down, pitch unchanged
+    # 6. Time stretch - speed up/slow down, pitch unchanged
     if time_stretch:
         rate = rng.uniform(*stretch_rate_range)
         x = librosa.effects.time_stretch(x.astype(np.float64), rate=rate).astype(np.float32)
@@ -132,7 +142,7 @@ def _augment_waveform(
         elif len(x) < original_len:
             x = np.pad(x, (0, original_len - len(x)))
 
-    # 7. Reverb — convolve with synthetic exponential RIR
+    # 7. Reverb - convolve with synthetic exponential RIR
     if reverb:
         rir_len = int(sr * 0.3)
         t = np.arange(rir_len, dtype=np.float32) / sr
@@ -140,7 +150,7 @@ def _augment_waveform(
         rir /= np.sum(np.abs(rir)) + 1e-8
         x = np.convolve(x, rir, mode="full")[:original_len].astype(np.float32)
 
-    # 8. Codec simulation — mu-law encode -> 8-bit quantise -> decode
+    # 8. Codec simulation - mu-law encode -> 8-bit quantise -> decode
     if codec:
         mu = 255.0
         xc = np.clip(x, -1.0, 1.0)
@@ -200,14 +210,15 @@ def _aug_kwargs(self) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# RawAugmenter — sklearn Transformer, shape-preserving
+# RawAugmenter - sklearn Transformer, shape-preserving
 # ---------------------------------------------------------------------------
+
 
 class RawAugmenter(BaseEstimator, TransformerMixin):
     """Waveform-level augmentation applied to every sample in transform().
 
     This is a standard sklearn Transformer, so it is called on BOTH the
-    train and test folds.  It does NOT change the number of rows — it only
+    train and test folds.  It does NOT change the number of rows - it only
     modifies the waveform in column 0 of each row in-place.
 
     Fully backwards-compatible with the original two-parameter version
@@ -302,8 +313,9 @@ class RawAugmenter(BaseEstimator, TransformerMixin):
 
 
 # ---------------------------------------------------------------------------
-# WaveformSynthesizer — imblearn Sampler, generates new rows
+# WaveformSynthesizer - imblearn Sampler, generates new rows
 # ---------------------------------------------------------------------------
+
 
 class WaveformSynthesizer(BaseSampler):
     """Imblearn-compatible sampler that synthesises new waveform rows.
@@ -331,7 +343,7 @@ class WaveformSynthesizer(BaseSampler):
         Sample rate.  Required for pitch_shift, time_stretch, and reverb.
     noise, gain, polarity, time_crop, pitch_shift, time_stretch,
     reverb, codec : bool
-        Per-technique flags — same semantics as RawAugmenter.
+        Per-technique flags - same semantics as RawAugmenter.
     n_augmentations : int or None
         If set, randomly pick this many techniques from the enabled ones
         for each synthetic sample.  None = apply all enabled techniques.
@@ -344,7 +356,7 @@ class WaveformSynthesizer(BaseSampler):
 
     # Override _validate_params to skip sklearn's constraint validation.
     # Our parameters have complex types (tuples, None | int) that don't map
-    # cleanly to sklearn's constraint system — we validate implicitly via
+    # cleanly to sklearn's constraint system - we validate implicitly via
     # Python types and numpy inside _augment_waveform.
     def _validate_params(self):
         pass
@@ -395,12 +407,12 @@ class WaveformSynthesizer(BaseSampler):
         self.random_state = random_state
 
     def fit_resample(self, X: np.ndarray, y: np.ndarray, **params) -> tuple[np.ndarray, np.ndarray]:
-        # Override to skip sklearn's check_array validation — X is an object
+        # Override to skip sklearn's check_array validation - X is an object
         # array containing variable-length waveforms which check_array cannot
         # handle.  We go straight to _fit_resample, bypassing _check_X_y.
         return self._fit_resample(X, y)
 
-    # ImbPipeline calls fit_resample() above — only on the train fold.
+    # ImbPipeline calls fit_resample() above - only on the train fold.
     def _fit_resample(self, X: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         if not self.enabled or self.n_samples <= 0:
             return X, y

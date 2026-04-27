@@ -5,12 +5,11 @@ import librosa
 import parselmouth
 from parselmouth.praat import call
 from scipy.stats import skew, kurtosis as sp_kurtosis
-from scipy.signal import lfilter
 import spkit as sp
 from sklearn.base import BaseEstimator, TransformerMixin
 import atexit
 import nolds
-from utils import (_floor_power_of_2)
+from utils import _floor_power_of_2
 import opensmile
 
 from src.feature_caching import FeatureCache
@@ -23,6 +22,7 @@ atexit.register(cache.flush_to_disk)
 # ============================================================
 # Sex normalization (to m/f)
 # ============================================================
+
 
 def normalize_sex_mf(value):
     """
@@ -48,6 +48,7 @@ def normalize_sex_mf(value):
 # ============================================================
 # Base class
 # ============================================================
+
 
 class FeatureExtractor(BaseEstimator, TransformerMixin):
     """
@@ -109,6 +110,7 @@ class FeatureExtractor(BaseEstimator, TransformerMixin):
 # Utility: drop signal column
 # ============================================================
 
+
 class DropSignalColumn(BaseEstimator, TransformerMixin):
     """Drops the first column (waveform) from the input data."""
 
@@ -125,6 +127,7 @@ class DropSignalColumn(BaseEstimator, TransformerMixin):
 # ============================================================
 # Original extractors
 # ============================================================
+
 
 class MFCCExtractor(FeatureExtractor):
     """
@@ -298,8 +301,16 @@ class SpectralFeaturesExtractor(FeatureExtractor):
     Features (in order): spectral flatness, rolloff, centroid, contrast (7 bands).
     """
 
-    def __init__(self, sr=16000, use_flatness=True, use_rolloff=True,
-                 use_centroid=True, use_contrast=True, enabled=True, cache_disabled=False):
+    def __init__(
+        self,
+        sr=16000,
+        use_flatness=True,
+        use_rolloff=True,
+        use_centroid=True,
+        use_contrast=True,
+        enabled=True,
+        cache_disabled=False,
+    ):
         super().__init__(enabled=enabled, cache_disabled=cache_disabled)
         self.sr = sr
         self.use_flatness = use_flatness
@@ -319,8 +330,7 @@ class SpectralFeaturesExtractor(FeatureExtractor):
 
     def extract_feature(self, x: np.ndarray) -> np.ndarray:
         features = self.cached_extraction(x, sr=self.sr)
-        mask = ([self.use_flatness, self.use_rolloff, self.use_centroid] +
-                [self.use_contrast] * len(features[3:]))
+        mask = [self.use_flatness, self.use_rolloff, self.use_centroid] + [self.use_contrast] * len(features[3:])
         return features[np.array(mask)].astype(np.float32)
 
 
@@ -345,20 +355,21 @@ def _get_smile(feature_set: str, feature_level: str):
 class OpenSmileExtractor(FeatureExtractor):
     """Extracts OpenSMILE feature set (e.g., ComParE_2016, eGeMAPSv02) from waveform."""
 
-    def __init__(self, sr=16000, feature_set="ComParE_2016", feature_level="functionals",
-                 enabled=False, cache_disabled=False):
+    def __init__(
+        self, sr=16000, feature_set="ComParE_2016", feature_level="functionals", enabled=False, cache_disabled=False
+    ):
         super().__init__(enabled=enabled, cache_disabled=cache_disabled)
         self.sr = sr
         self.feature_set = feature_set
         self.feature_level = feature_level
 
     def extract_feature(self, x: np.ndarray) -> np.ndarray:
-        return self.cached_extraction(x, sr=self.sr, feature_set=self.feature_set,
-                                      feature_level=self.feature_level)
+        return self.cached_extraction(x, sr=self.sr, feature_set=self.feature_set, feature_level=self.feature_level)
 
     @staticmethod
-    def _extract_full_features(x: np.ndarray, sr: int, feature_set: str,
-                                feature_level: str) -> np.ndarray:  # type: ignore[override]
+    def _extract_full_features(
+        x: np.ndarray, sr: int, feature_set: str, feature_level: str
+    ) -> np.ndarray:  # type: ignore[override]
         x = np.asarray(x).reshape(-1)
         smile = _get_smile(feature_set=feature_set, feature_level=feature_level)
         df = smile.process_signal(x, sr)
@@ -369,6 +380,7 @@ class OpenSmileExtractor(FeatureExtractor):
 # ============================================================
 # Shared helpers for robust extractors
 # ============================================================
+
 
 def _normalise(x: np.ndarray) -> np.ndarray:
     """Zero-mean / unit-variance normalisation."""
@@ -403,10 +415,10 @@ def _levinson_durbin(r: np.ndarray, order: int) -> np.ndarray:
             lam = -(r[i + 1] + np.dot(a[:i], r[i:0:-1])) / e
         a_new = a.copy()
         if i > 0:
-            a_new[:i] = a[:i] + lam * a[i - 1::-1]
+            a_new[:i] = a[:i] + lam * a[i - 1 :: -1]
         a_new[i] = lam
         a = a_new
-        e *= 1.0 - lam ** 2
+        e *= 1.0 - lam**2
         if e <= 1e-12:
             break
     return -a
@@ -427,19 +439,18 @@ def _lp_to_area(a: np.ndarray) -> np.ndarray:
     for i in range(order - 1, -1, -1):
         ki = coef[i]
         k_all.append(ki)
-        denom = 1.0 - ki ** 2
+        denom = 1.0 - ki**2
         if abs(denom) < 1e-12:
             break
         if i > 0:
-            coef[:i] = (coef[:i] - ki * coef[i - 1::-1]) / denom
+            coef[:i] = (coef[:i] - ki * coef[i - 1 :: -1]) / denom
     areas = np.ones(len(k_all) + 1)
     for j, ki in enumerate(k_all):
         areas[j + 1] = areas[j] * (1.0 - ki) / (1.0 + ki + 1e-12)
     return areas
 
 
-def _rqa_features(x: np.ndarray, m: int = 3, tau: int = 2,
-                  eps_frac: float = 0.10, lmin: int = 2) -> np.ndarray:
+def _rqa_features(x: np.ndarray, m: int = 3, tau: int = 2, eps_frac: float = 0.10, lmin: int = 2) -> np.ndarray:
     """
     Compute RQA features (RR, DET, LAM) from a 1-D normalised signal.
 
@@ -456,18 +467,20 @@ def _rqa_features(x: np.ndarray, m: int = 3, tau: int = 2,
     np.ndarray([RR, DET, LAM], dtype=float32)
     """
     x = _normalise(x)
+    # pylint: disable=invalid-name
     N = len(x)
     M = N - (m - 1) * tau
     if M <= lmin:
         return np.zeros(3, dtype=np.float32)
 
-    X = np.stack([x[i: i + (m - 1) * tau + 1: tau] for i in range(M)])
+    X = np.stack([x[i : i + (m - 1) * tau + 1 : tau] for i in range(M)])
     diff = X[:, None, :] - X[None, :, :]
-    dist = np.sqrt((diff ** 2).sum(axis=-1))
+    dist = np.sqrt((diff**2).sum(axis=-1))
 
     eps = eps_frac * dist.mean()
     R = (dist < eps).astype(np.int8)
     np.fill_diagonal(R, 0)
+    # pylint: enable=invalid-name
 
     total = R.sum()
     if total == 0:
@@ -482,11 +495,13 @@ def _rqa_features(x: np.ndarray, m: int = 3, tau: int = 2,
         run, in_line = 0, False
         for v in diag:
             if v:
-                run += 1; in_line = True
+                run += 1
+                in_line = True
             else:
                 if in_line and run >= lmin:
                     det_pts += run
-                run = 0; in_line = False
+                run = 0
+                in_line = False
         if in_line and run >= lmin:
             det_pts += run
     det = det_pts / total
@@ -498,11 +513,13 @@ def _rqa_features(x: np.ndarray, m: int = 3, tau: int = 2,
         run, in_line = 0, False
         for v in col_vec:
             if v:
-                run += 1; in_line = True
+                run += 1
+                in_line = True
             else:
                 if in_line and run >= lmin:
                     lam_pts += run
-                run = 0; in_line = False
+                run = 0
+                in_line = False
         if in_line and run >= lmin:
             lam_pts += run
     lam = lam_pts / total
@@ -510,8 +527,7 @@ def _rqa_features(x: np.ndarray, m: int = 3, tau: int = 2,
     return np.array([rr, det, lam], dtype=np.float32)
 
 
-def _rpde(x: np.ndarray, m: int = 4, tau: int = 1,
-          eps_frac: float = 0.10, T_max: int = 200) -> float:
+def _rpde(x: np.ndarray, m: int = 4, tau: int = 1, eps_frac: float = 0.10, T_max: int = 200) -> float:
     """
     Recurrence Period Density Entropy (Little et al., 2007).
 
@@ -523,7 +539,7 @@ def _rpde(x: np.ndarray, m: int = 4, tau: int = 1,
     if M < 20:
         return 0.0
 
-    X = np.stack([x[i: i + (m - 1) * tau + 1: tau] for i in range(M)])
+    X = np.stack([x[i : i + (m - 1) * tau + 1 : tau] for i in range(M)])
     ref = X[M // 2]
     dist = np.linalg.norm(X - ref, axis=1)
     eps = eps_frac * dist.mean()
@@ -542,7 +558,7 @@ def _rpde(x: np.ndarray, m: int = 4, tau: int = 1,
     if len(periods) < 5:
         return 0.0
 
-    counts = np.bincount(periods, minlength=T_max + 1)[1: T_max + 1].astype(float)
+    counts = np.bincount(periods, minlength=T_max + 1)[1 : T_max + 1].astype(float)
     p = counts / counts.sum()
     p = p[p > 0]
     H = -np.sum(p * np.log(p))
@@ -552,6 +568,7 @@ def _rpde(x: np.ndarray, m: int = 4, tau: int = 1,
 # ============================================================
 # New robust extractor 1: F0DerivativesExtractor
 # ============================================================
+
 
 class F0DerivativesExtractor(FeatureExtractor):
     """
@@ -608,7 +625,10 @@ class F0DerivativesExtractor(FeatureExtractor):
 
     @staticmethod
     def _extract_full_features(  # type: ignore[override]
-        x: np.ndarray, fmin: float, fmax: float, sr: int,
+        x: np.ndarray,
+        fmin: float,
+        fmax: float,
+        sr: int,
     ) -> np.ndarray:
         sound = parselmouth.Sound(x, sampling_frequency=sr)
         pitch = call(sound, "To Pitch", 0.0, fmin, fmax)
@@ -648,10 +668,15 @@ class F0DerivativesExtractor(FeatureExtractor):
 
     def extract_feature(self, x: np.ndarray) -> np.ndarray:
         features = self.cached_extraction(x, fmin=self.fmin, fmax=self.fmax, sr=self.sr)
-        mask = np.array([
-            self.use_f0_iqr, self.use_f0_range, self.use_ppe,
-            self.use_nan_rate, self.use_pitch_diff_std,
-        ])
+        mask = np.array(
+            [
+                self.use_f0_iqr,
+                self.use_f0_range,
+                self.use_ppe,
+                self.use_nan_rate,
+                self.use_pitch_diff_std,
+            ]
+        )
         return features[mask]
 
     def transform(self, X: np.ndarray) -> np.ndarray:
@@ -669,10 +694,15 @@ class F0DerivativesExtractor(FeatureExtractor):
             else:
                 fmin, fmax = self.fmin, self.fmax
             features = self.cached_extraction(x, fmin=fmin, fmax=fmax, sr=self.sr)
-            mask = np.array([
-                self.use_f0_iqr, self.use_f0_range, self.use_ppe,
-                self.use_nan_rate, self.use_pitch_diff_std,
-            ])
+            mask = np.array(
+                [
+                    self.use_f0_iqr,
+                    self.use_f0_range,
+                    self.use_ppe,
+                    self.use_nan_rate,
+                    self.use_pitch_diff_std,
+                ]
+            )
             X_out.append(np.concatenate((row, features[mask])))
         return np.array(np.vstack(X_out), dtype=object)
 
@@ -680,6 +710,7 @@ class F0DerivativesExtractor(FeatureExtractor):
 # ============================================================
 # New robust extractor 2: NonlinearExtractor
 # ============================================================
+
 
 class NonlinearExtractor(FeatureExtractor):
     """
@@ -757,9 +788,16 @@ class NonlinearExtractor(FeatureExtractor):
     def _extract_full_features(  # type: ignore[override]
         x: np.ndarray,
         sr: int,
-        rqa_m: int, rqa_tau: int, rqa_eps_frac: float, rqa_lmin: int,
-        rpde_m: int, rpde_tau: int, rpde_eps_frac: float, rpde_T_max: int,
-        sampen_m: int, sampen_r: float,
+        rqa_m: int,
+        rqa_tau: int,
+        rqa_eps_frac: float,
+        rqa_lmin: int,
+        rpde_m: int,
+        rpde_tau: int,
+        rpde_eps_frac: float,
+        rpde_T_max: int,
+        sampen_m: int,
+        sampen_r: float,
     ) -> np.ndarray:
         # Downsample to 8 kHz for speed, then normalise
         step = max(1, sr // 8000)
@@ -767,11 +805,9 @@ class NonlinearExtractor(FeatureExtractor):
 
         # RQA on a short segment (O(N²) cost)
         seg_len = min(len(xs), 1000)
-        rr, det, lam = _rqa_features(xs[:seg_len], m=rqa_m, tau=rqa_tau,
-                                      eps_frac=rqa_eps_frac, lmin=rqa_lmin)
+        rr, det, lam = _rqa_features(xs[:seg_len], m=rqa_m, tau=rqa_tau, eps_frac=rqa_eps_frac, lmin=rqa_lmin)
 
-        rpde_val = _rpde(xs, m=rpde_m, tau=rpde_tau,
-                         eps_frac=rpde_eps_frac, T_max=rpde_T_max)
+        rpde_val = _rpde(xs, m=rpde_m, tau=rpde_tau, eps_frac=rpde_eps_frac, T_max=rpde_T_max)
 
         try:
             dfa_val = float(nolds.dfa(xs))
@@ -779,35 +815,45 @@ class NonlinearExtractor(FeatureExtractor):
             dfa_val = 0.0
 
         try:
-            sampen_val = float(nolds.sampen(xs, emb_dim=sampen_m,
-                                            tolerance=sampen_r * np.std(xs)))
+            sampen_val = float(nolds.sampen(xs, emb_dim=sampen_m, tolerance=sampen_r * np.std(xs)))
         except Exception:
             sampen_val = 0.0
 
-        features = np.array([rr, det, lam, rpde_val, dfa_val, sampen_val],
-                             dtype=np.float32)
+        features = np.array([rr, det, lam, rpde_val, dfa_val, sampen_val], dtype=np.float32)
         return np.nan_to_num(features, nan=0.0)
 
     def extract_feature(self, x: np.ndarray) -> np.ndarray:
         features = self.cached_extraction(
             x,
             sr=self.sr,
-            rqa_m=self.rqa_m, rqa_tau=self.rqa_tau,
-            rqa_eps_frac=self.rqa_eps_frac, rqa_lmin=self.rqa_lmin,
-            rpde_m=self.rpde_m, rpde_tau=self.rpde_tau,
-            rpde_eps_frac=self.rpde_eps_frac, rpde_T_max=self.rpde_T_max,
-            sampen_m=self.sampen_m, sampen_r=self.sampen_r,
+            rqa_m=self.rqa_m,
+            rqa_tau=self.rqa_tau,
+            rqa_eps_frac=self.rqa_eps_frac,
+            rqa_lmin=self.rqa_lmin,
+            rpde_m=self.rpde_m,
+            rpde_tau=self.rpde_tau,
+            rpde_eps_frac=self.rpde_eps_frac,
+            rpde_T_max=self.rpde_T_max,
+            sampen_m=self.sampen_m,
+            sampen_r=self.sampen_r,
         )
-        mask = np.array([
-            self.use_rqa_rr, self.use_rqa_det, self.use_rqa_lam,
-            self.use_rpde, self.use_dfa, self.use_sampen,
-        ])
+        mask = np.array(
+            [
+                self.use_rqa_rr,
+                self.use_rqa_det,
+                self.use_rqa_lam,
+                self.use_rpde,
+                self.use_dfa,
+                self.use_sampen,
+            ]
+        )
         return features[mask]
 
 
 # ============================================================
 # New robust extractor 3: VocalTractExtractor
 # ============================================================
+
 
 class VocalTractExtractor(FeatureExtractor):
     """
@@ -859,7 +905,11 @@ class VocalTractExtractor(FeatureExtractor):
 
     @staticmethod
     def _extract_full_features(  # type: ignore[override]
-        x: np.ndarray, sr: int, lp_order: int, frame_ms: float, hop_ms: float,
+        x: np.ndarray,
+        sr: int,
+        lp_order: int,
+        frame_ms: float,
+        hop_ms: float,
     ) -> np.ndarray:
         frame_len = int(frame_ms * sr / 1000)
         hop_len = int(hop_ms * sr / 1000)
@@ -868,14 +918,14 @@ class VocalTractExtractor(FeatureExtractor):
         areas_over_time = []
 
         for start in range(0, len(x) - frame_len + 1, hop_len):
-            frame = x[start: start + frame_len] * window
-            energy = np.sqrt(np.mean(frame ** 2))
+            frame = x[start : start + frame_len] * window
+            energy = np.sqrt(np.mean(frame**2))
             if energy < 1e-8:
                 continue
-            frame = frame / energy   # unit-energy normalisation
+            frame = frame / energy  # unit-energy normalisation
 
-            r = np.correlate(frame, frame, mode="full")[frame_len - 1:]
-            r = r[:lp_order + 1]
+            r = np.correlate(frame, frame, mode="full")[frame_len - 1 :]
+            r = r[: lp_order + 1]
             if r[0] == 0:
                 continue
 
@@ -887,28 +937,31 @@ class VocalTractExtractor(FeatureExtractor):
         if len(areas_over_time) < 4:
             return np.zeros(3 * n_tubes, dtype=np.float32)
 
-        A = np.array(areas_over_time)           # (n_frames, n_tubes)
-        var = np.var(A, axis=0)
-        mean = np.mean(A, axis=0)
+        areas_over_time = np.array(areas_over_time)  # (n_frames, n_tubes)
+        var = np.var(areas_over_time, axis=0)
+        mean = np.mean(areas_over_time, axis=0)
         ratio_var = var / (np.abs(mean) + 1e-8)
-        kurt = sp_kurtosis(A, axis=0, fisher=True)
+        kurt = sp_kurtosis(areas_over_time, axis=0, fisher=True)
 
         features = np.concatenate([var, ratio_var, kurt]).astype(np.float32)
         return np.nan_to_num(features, nan=0.0)
 
     def extract_feature(self, x: np.ndarray) -> np.ndarray:
         all_feats = self.cached_extraction(
-            x, sr=self.sr, lp_order=self.lp_order,
-            frame_ms=self.frame_ms, hop_ms=self.hop_ms,
+            x,
+            sr=self.sr,
+            lp_order=self.lp_order,
+            frame_ms=self.frame_ms,
+            hop_ms=self.hop_ms,
         )
         n = self.lp_order + 1
         parts = []
         if self.use_var:
             parts.append(all_feats[:n])
         if self.use_ratio_var:
-            parts.append(all_feats[n: 2 * n])
+            parts.append(all_feats[n : 2 * n])
         if self.use_kurtosis:
-            parts.append(all_feats[2 * n: 3 * n])
+            parts.append(all_feats[2 * n : 3 * n])
         if not parts:
             return np.array([], dtype=np.float32)
         return np.concatenate(parts)
