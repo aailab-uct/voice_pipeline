@@ -35,9 +35,6 @@ Environment / codec:
     codec           mu-law encode -> quantise to 8 bit -> decode.
                     Simulates telephone / low-bitrate codec artefacts.
 
-librosa is imported lazily — the module loads without it, but a clear
-ImportError is raised if pitch_shift or time_stretch are enabled and
-librosa is not installed.
 """
 
 from __future__ import annotations
@@ -45,22 +42,7 @@ from __future__ import annotations
 import numpy as np
 from sklearn.base import BaseEstimator, TransformerMixin
 from imblearn.base import BaseSampler
-
-_librosa = None
-
-
-def _get_librosa():
-    global _librosa
-    if _librosa is None:
-        try:
-            import librosa as _lib
-            _librosa = _lib
-        except ImportError as exc:
-            raise ImportError(
-                "librosa is required for pitch_shift / time_stretch. "
-                "Install it with:  pip install librosa"
-            ) from exc
-    return _librosa
+import librosa
 
 
 # ---------------------------------------------------------------------------
@@ -135,15 +117,13 @@ def _augment_waveform(
 
     # 5. Pitch shift — shift by random semitones, duration unchanged
     if pitch_shift:
-        lib = _get_librosa()
         n_steps = rng.uniform(*pitch_semitones_range)
-        x = lib.effects.pitch_shift(x.astype(np.float64), sr=sr, n_steps=n_steps).astype(np.float32)
+        x = librosa.effects.pitch_shift(x.astype(np.float64), sr=sr, n_steps=n_steps).astype(np.float32)
 
     # 6. Time stretch — speed up/slow down, pitch unchanged
     if time_stretch:
-        lib = _get_librosa()
         rate = rng.uniform(*stretch_rate_range)
-        x = lib.effects.time_stretch(x.astype(np.float64), rate=rate).astype(np.float32)
+        x = librosa.effects.time_stretch(x.astype(np.float64), rate=rate).astype(np.float32)
 
     # Restore original length after librosa ops (may change array size)
     if pitch_shift or time_stretch:
