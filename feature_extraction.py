@@ -419,7 +419,7 @@ def _lp_to_area(a: np.ndarray) -> np.ndarray:
 
     Returns
     -------
-    areas : shape (len(a)+1,) – relative tube cross-sections
+    areas : shape (len(a)+1,) - relative tube cross-sections
     """
     k_all = []
     coef = a.copy().astype(float)
@@ -475,7 +475,7 @@ def _rqa_features(x: np.ndarray, m: int = 3, tau: int = 2,
 
     rr = total / (M * M)
 
-    # DET – diagonal lines >= lmin
+    # DET - diagonal lines >= lmin
     det_pts = 0
     for d in range(-(M - 1), M):
         diag = np.diag(R, d)
@@ -491,7 +491,7 @@ def _rqa_features(x: np.ndarray, m: int = 3, tau: int = 2,
             det_pts += run
     det = det_pts / total
 
-    # LAM – vertical lines >= lmin
+    # LAM - vertical lines >= lmin
     lam_pts = 0
     for col in range(M):
         col_vec = R[:, col]
@@ -558,11 +558,11 @@ class F0DerivativesExtractor(FeatureExtractor):
     Robust F0-derivative features for sustained-vowel analysis.
 
     Features (in order):
-        f0_iqr         – interquartile range of F0 (Hz)
-        f0_range       – max − min of voiced F0 frames (Hz)
-        ppe            – Pitch Period Entropy (normalised to [0, 1])
-        nan_rate       – fraction of unvoiced (NaN/zero) F0 frames
-        pitch_diff_std – std of relative cycle-to-cycle F0 change
+        f0_iqr         - interquartile range of F0 (Hz)
+        f0_range       - max - min of voiced F0 frames (Hz)
+        ppe            - Pitch Period Entropy (normalised to [0, 1])
+        nan_rate       - fraction of unvoiced (NaN/zero) F0 frames
+        pitch_diff_std - std of relative cycle-to-cycle F0 change
 
     All five are device-independent: they depend on the relative
     distribution of F0 values, not on absolute signal amplitude.
@@ -623,7 +623,7 @@ class F0DerivativesExtractor(FeatureExtractor):
         f0_iqr = float(np.percentile(voiced, 75) - np.percentile(voiced, 25))
         f0_range = float(voiced.max() - voiced.min())
 
-        # PPE – normalised entropy of the distribution of pitch periods
+        # PPE - normalised entropy of the distribution of pitch periods
         periods = 1.0 / voiced
         periods_norm = periods / periods.mean()
         hist, _ = np.histogram(periods_norm, bins=50, range=(0.5, 2.0))
@@ -686,12 +686,12 @@ class NonlinearExtractor(FeatureExtractor):
     Nonlinear-dynamics features for sustained-vowel analysis.
 
     Features (in order):
-        rqa_rr   – Recurrence Rate
-        rqa_det  – Determinism
-        rqa_lam  – Laminarity
-        rpde     – Recurrence Period Density Entropy
-        dfa      – Detrended Fluctuation Analysis exponent
-        sampen   – Sample Entropy (m=2)
+        rqa_rr   - Recurrence Rate
+        rqa_det  - Determinism
+        rqa_lam  - Laminarity
+        rpde     - Recurrence Period Density Entropy
+        dfa      - Detrended Fluctuation Analysis exponent
+        sampen   - Sample Entropy (m=2)
 
     All features are computed after normalising the signal to
     zero-mean / unit-variance, making them gain-independent.
@@ -814,18 +814,18 @@ class VocalTractExtractor(FeatureExtractor):
     Vocal-tract area-function features for sustained-vowel analysis.
 
     The vocal tract is modelled as p cylindrical tubes via linear
-    prediction (LP).  For healthy phonation the LP coefficients –
-    and thus the area function – are stable across frames.
+    prediction (LP).  For healthy phonation the LP coefficients -
+    and thus the area function - are stable across frames.
     Pathological phonation introduces frame-to-frame variability
     captured by the statistics below.
 
     Each frame is normalised to unit energy before LP analysis so
     results are gain-independent and robust across microphones.
 
-    Features (total = 3 × (lp_order + 1)):
-        vt_var_k        – variance of area_k across frames
-        vt_ratio_var_k  – var(area_k) / mean(area_k)          (coefficient of variation)
-        vt_kurtosis_k   – excess kurtosis of area_k across frames
+    Features (total = 3 * (lp_order + 1)):
+        vt_var_k        - variance of area_k across frames
+        vt_ratio_var_k  - var(area_k) / mean(area_k)          (coefficient of variation)
+        vt_kurtosis_k   - excess kurtosis of area_k across frames
 
     Parameters
     ----------
