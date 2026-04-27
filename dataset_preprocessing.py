@@ -18,7 +18,7 @@ from tqdm import tqdm
 import numpy as np
 import parselmouth
 from parselmouth.praat import call
-import openpyxl
+import pandas as pd
 
 
 # ============================================================
@@ -59,16 +59,9 @@ MIN_AGE = 18
 
 def is_adult(age) -> bool:
     """
-    Return True if age is numeric and >= MIN_AGE. Otherwise False.
-    Handles None, strings, floats safely.
+    Return True if age is >= MIN_AGE
     """
-    if age is None:
-        # TODO: We should probably handle this in one safer place, as otherwise we might miss errors in other steps
-        return False
-    try:
-        return float(age) >= MIN_AGE
-    except Exception:# TODO: dtto
-        return False
+    return float(age) >= MIN_AGE
 
 
 # ============================================================
@@ -118,25 +111,28 @@ def f0_range_for_sex(sex_mf):
 # ============================================================
 
 TRIM_TOP_DB = 20
-TARGET_RMS  = 0.1
-MIN_RMS     = 1e-6
+TARGET_RMS = 0.1
+MIN_RMS = 1e-6
 
 # AVFAD crop parametry
-NOISE_EST_S   = 0.1
+NOISE_EST_S = 0.1
 SILENCE_RATIO = 0.3
-MIN_PAUSE_S   = 0.15
-MIN_REP_S     = 0.5
-WINDOW_S      = 0.05
+MIN_PAUSE_S = 0.15
+MIN_REP_S = 0.5
+WINDOW_S = 0.05
 
 
 def frame_energy_db(x: np.ndarray, frame_length: int, hop_length: int) -> np.ndarray:
     n_frames = (len(x) - frame_length) // hop_length + 1
     if n_frames <= 0:
         return np.array([-100.0], dtype=np.float32)
-    return np.array([
-        10 * np.log10(np.mean(x[i * hop_length: i * hop_length + frame_length] ** 2) + 1e-10)
-        for i in range(n_frames)
-    ], dtype=np.float32)
+    return np.array(
+        [
+            10 * np.log10(np.mean(x[i * hop_length : i * hop_length + frame_length] ** 2) + 1e-10)
+            for i in range(n_frames)
+        ],
+        dtype=np.float32,
+    )
 
 
 def subtract_noise_energy(edb: np.ndarray, fs: int, hop_length: int) -> np.ndarray:
@@ -153,12 +149,12 @@ def adaptive_silence_threshold(edb: np.ndarray) -> float:
 
 def find_first_repetition(x: np.ndarray, fs: int) -> tuple[int, list[tuple[int, int]], float]:
     frame_length = max(4, int(WINDOW_S * fs))
-    hop_length   = max(1, frame_length // 2)
-    edb          = frame_energy_db(x, frame_length, hop_length)
-    edb_clean    = subtract_noise_energy(edb, fs, hop_length)
-    thresh       = adaptive_silence_threshold(edb_clean)
-    silent       = edb_clean < thresh
-    n_frames     = len(edb_clean)
+    hop_length = max(1, frame_length // 2)
+    edb = frame_energy_db(x, frame_length, hop_length)
+    edb_clean = subtract_noise_energy(edb, fs, hop_length)
+    thresh = adaptive_silence_threshold(edb_clean)
+    silent = edb_clean < thresh
+    n_frames = len(edb_clean)
 
     first_voiced = next((i for i, s in enumerate(silent) if not s), None)
     if first_voiced is None:
@@ -186,29 +182,31 @@ def find_first_repetition(x: np.ndarray, fs: int) -> tuple[int, list[tuple[int, 
 def trim_edges(x: np.ndarray, fs: int) -> np.ndarray:
     fl = max(1, int(0.02 * fs))
     hl = max(1, fl // 2)
-    edb         = frame_energy_db(x, fl, hl)
+    edb = frame_energy_db(x, fl, hl)
     noise_floor = float(np.percentile(edb, 10))
-    peak        = float(np.percentile(edb, 95))
-    start_thr   = noise_floor + 0.25 * (peak - noise_floor)
-    end_thr     = noise_floor + 0.18 * (peak - noise_floor)
-    min_run     = max(1, int(0.06 * fs / hl))
+    peak = float(np.percentile(edb, 95))
+    start_thr = noise_floor + 0.25 * (peak - noise_floor)
+    end_thr = noise_floor + 0.18 * (peak - noise_floor)
+    min_run = max(1, int(0.06 * fs / hl))
 
     def first_run(mask, n):
         cnt = 0
         for i, v in enumerate(mask):
             cnt = cnt + 1 if v else 0
-            if cnt >= n: return i - n + 1
+            if cnt >= n:
+                return i - n + 1
         return None
 
     def last_run(mask, n):
         cnt = 0
         for i in range(len(mask) - 1, -1, -1):
             cnt = cnt + 1 if mask[i] else 0
-            if cnt >= n: return i + n - 1
+            if cnt >= n:
+                return i + n - 1
         return None
 
     s = first_run(edb >= start_thr, min_run)
-    e = last_run(edb >= end_thr,   min_run)
+    e = last_run(edb >= end_thr, min_run)
     if s is None or e is None:
         return x
     start, end = s * hl, min(len(x), e * hl + fl)
@@ -216,8 +214,8 @@ def trim_edges(x: np.ndarray, fs: int) -> np.ndarray:
 
 
 def rms_normalize(x: np.ndarray) -> np.ndarray:
-    rms = float(np.sqrt(np.mean(x ** 2)))
-    return x * (TARGET_RMS / rms) if rms > MIN_RMS else x
+    rms = float(np.sqrt(np.mean(x**2)))
+    return (TARGET_RMS / rms) * x if rms > MIN_RMS else x
 
 
 def preprocess_signal(x: np.ndarray, fs: int) -> np.ndarray:
@@ -260,24 +258,20 @@ PVQD_DEMOGRAPHICS_XLSX = PVQD_ROOT / "Demographics.xlsx"
 
 
 def load_pvqd_metadata(xlsx_path: Path):
-    df = openpyxl.load_workbook(xlsx_path, data_only=True).active
-    rows = list(df.iter_rows(values_only=True))
-    header = [str(h).strip() if h is not None else "" for h in rows[0]]
-    col = {h: i for i, h in enumerate(header)}
+    df = pd.read_excel(xlsx_path)
+    df.columns = [str(c).strip() for c in df.columns]
 
     out = []
-    for r in rows[1:]:
-        pid = r[
-            col.get("Participant ID", col.get("Participant ID "))
-        ]  # TODO: doopravdy je tohle nutne? nestaci ten strip nahore?
+    for row in df.replace({np.nan: None}).to_dict("records"):
+        pid = row.get("Participant ID")
         if pid is None:
             continue
         out.append(
             {
                 "participant_id": str(pid).strip(),
-                "sex": r[col.get("Gender")],
-                "age": r[col.get("Age")],
-                "diagnosis": r[col.get("Diagnosis", col.get("Diagnosis "))],  # TODO: dtto
+                "sex": row.get("Gender"),
+                "age": row.get("Age"),
+                "diagnosis": row.get("Diagnosis"),
             }
         )
     return out
@@ -289,7 +283,6 @@ def normalize_pvqd_pathology(value):
     pathology_string = str(value).lower().strip()
     if not pathology_string:
         return "healthy"
-
 
     # PVQD sheet uses N for normal, and sometimes Y as "has pathology"
     if pathology_string in {"n", "normal"}:
@@ -397,9 +390,7 @@ SVD_PATTERN = re.compile(r"(?P<id>\d+)-(?P<vowel>[a-z]+)_(?P<intonation>[a-z]+)\
 
 
 def load_svd_metadata(csv_path: Path):
-    with open(csv_path, newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        return list(reader)
+    return pd.read_csv(csv_path, dtype=str, keep_default_na=False).to_dict("records")
 
 
 def normalize_pathology(value):
@@ -575,27 +566,22 @@ AVFAD_CROP_TO_ONE_REP = True
 
 def load_avfad_metadata(xlsx_path: Path):
 
-    wb = openpyxl.load_workbook(xlsx_path, data_only=True)
-    ws = wb[AVFAD_SHEET]
-
-    rows = ws.iter_rows(values_only=True)
-    header = next(rows)
-
-    col = {str(h).strip(): i for i, h in enumerate(header) if h is not None}
+    df = pd.read_excel(xlsx_path, sheet_name=AVFAD_SHEET)
+    df.columns = [str(c).strip() for c in df.columns]
 
     out = []
-    for r in rows:
+    for row in df.replace({np.nan: None}).to_dict("records"):
 
-        file_id = r[col["File ID"]]
+        file_id = row["File ID"]
         if file_id is None:
             continue
 
         out.append(
             {
                 "file_id": str(file_id).strip(),
-                "age": r[col["Age"]],
-                "sex": r[col["Sex"]],
-                "pathology": r[col["CMVD-I Dimension 1 (word system)"]],
+                "age": row["Age"],
+                "sex": row["Sex"],
+                "pathology": row["CMVD-I Dimension 1 (word system)"],
             }
         )
 
@@ -626,7 +612,7 @@ def process_avfad_file(wav_path: Path, src_row: dict, vowel: str, writer, record
         sound = parselmouth.Sound(x, sampling_frequency=int(fs))
         pitch = call(sound, "To Pitch", 0.0, fmin, fmax)
         mean_f0 = call(pitch, "Get mean", 0, 0, "Hertz")
-    except Exception as e: # TODO: unused e
+    except Exception:  # TODO: this should be only for specific parselmouth errors, not a blanket catch
         print("AVFAD skipped:", src_row.get("file_id"), wav_path.name, "fs=", fs, "len=", len(x) / fs)
         return record_idx
 
@@ -665,8 +651,6 @@ def process_avfad_file(wav_path: Path, src_row: dict, vowel: str, writer, record
 
 def build_dataset():
 
-    svd_metadata = load_svd_metadata(SVD_METADATA_CSV)
-
     with open(OUT_CSV, "w", newline="", encoding="utf-8") as f:
 
         writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS)
@@ -674,6 +658,7 @@ def build_dataset():
 
         idx = 0
 
+        svd_metadata = load_svd_metadata(SVD_METADATA_CSV)
         for p in tqdm(list(SVD_ROOT.rglob("*.nsp")), desc="Processing SVD"):
             idx = process_svd_file(p, svd_metadata, writer, idx)
 
@@ -689,7 +674,6 @@ def build_dataset():
                     continue
                 idx = process_avfad_file(p, r, vowel, writer, idx)
 
-        # PVQD
         pvqd_meta = load_pvqd_metadata(PVQD_DEMOGRAPHICS_XLSX)
         for r in tqdm(pvqd_meta, desc="Processing PVQD"):
             pid = r["participant_id"]

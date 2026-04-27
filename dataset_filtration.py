@@ -2,10 +2,10 @@
 Module for filtering dataset and building feature and label arrays.
 """
 
-import csv
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import soundfile as sf
 from tqdm import tqdm
 import librosa
@@ -79,8 +79,7 @@ def build_dataset(
     pathologies_out = []
     datasets_out = []
 
-    with open(METADATA_CSV, newline="", encoding="utf-8") as f:
-        rows = list(csv.DictReader(f))
+    rows = pd.read_csv(METADATA_CSV).to_dict("records")
 
     for row in tqdm(rows, desc="Building X, y, groups"):
         pathology = row["pathologies"]
