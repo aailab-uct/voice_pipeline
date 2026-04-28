@@ -3,6 +3,7 @@
 import numpy as np
 import librosa
 import parselmouth
+from typing import Literal
 from parselmouth.praat import call
 from scipy.stats import skew, kurtosis as sp_kurtosis
 import spkit as sp
@@ -25,7 +26,7 @@ atexit.register(cache.flush_to_disk)
 
 # Normalize sex labels
 
-def normalize_sex(value):
+def normalize_sex(value) -> str:
     """Normalize a sex label to ``"m"`` or ``"f"``.
 
     Parameters
@@ -35,16 +36,15 @@ def normalize_sex(value):
 
     Returns
     -------
-    str or None
-        ``"m"`` for male labels, ``"f"`` for female labels, and ``None`` if
-        the label is unknown.
+    str
+        ``"m"`` for male labels, ``"f"`` for female labels
 
     Notes
     -----
     The labels ``"0"`` and ``"1"`` are accepted for backward compatibility.
     """
     if value is None:
-        return None
+        raise ValueError(f"None as sex label")
 
     s = str(value).strip().lower()
 
@@ -55,8 +55,6 @@ def normalize_sex(value):
     else:
         raise ValueError(f"Unknown sex label: {value}")
 
-    return None
-
 
 # sex-specific F0 ranges
 
@@ -65,11 +63,27 @@ F0_RANGES = {
     "f": (100.0, 600.0),
 }
 
-DEFAULT_F0_RANGE = (75.0, 600.0)  # if sex not known try full range
 
+def f0_range_for_sex(sex: Literal['m', 'f'] | None) -> tuple[float, float]:
+    """Get the F0 search range for a given sex.
 
-def f0_range_for_sex(sex):
-    return F0_RANGES.get(sex, DEFAULT_F0_RANGE)
+    Parameters
+    ----------
+    sex : str or None
+        The sex (normalized to "m" or "f") for which to get the F0 range.
+        If None, the default range (minimal lower bound and maximal upper bound) is returned.
+
+    Returns
+    -------
+    tuple[float, float]
+        The f0 search range for the given sex.
+    """
+    if sex is None:
+        return (min(r[0] for r in F0_RANGES.values()), # minimum of all lower bounds
+                max(r[1] for r in F0_RANGES.values())) # maximum of all upper bounds
+    if not sex in F0_RANGES.keys():
+        raise ValueError(f"Unknown sex label: {sex}")
+    return F0_RANGES[sex]
 
 
 # ============================================================
