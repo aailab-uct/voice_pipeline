@@ -95,11 +95,14 @@ def is_adult(age: int) -> bool:
 # ============================================================
 
 # TODO @Galtan-dev: add comments
-TRIM_TOP_DB = 20
+TRIM_TOP_DB = 20    # relict, asi uplně vyhodit
+# target loundness to which is signal normalized
 TARGET_RMS = 0.1
+# threshold under which is normalization not applied (protection against amplification of noise)
 MIN_RMS = 1e-6
 
 # AVFAD crop parametry
+# gues of time of silence on the beginning of signal
 NOISE_EST_S = 0.1
 SILENCE_RATIO = 0.3
 MIN_PAUSE_S = 0.15
@@ -109,12 +112,18 @@ WINDOW_S = 0.05
 
 # TODO @Galtan-dev: why this?!?
 def frame_energy_db(x: np.ndarray, frame_length: int, hop_length: int) -> np.ndarray:
-    """TODO @Galtan-dev: docstring."""
+    """
+    Function which computes energy of sound signal in decibels
+    """
+    # coalculate number of frames that fit into the signal
     n_frames = (len(x) - frame_length) // hop_length + 1
+    # if signal is too short, return -100 which is practically equal to silence
     if n_frames <= 0:
         return np.array([-100.0], dtype=np.float32)
+    # if signal is long enough continue
     return np.array(
         [
+            # calculate energy of signal for evry frame in signal and return mean of them
             10 * np.log10(np.mean(x[i * hop_length : i * hop_length + frame_length] ** 2) + 1e-10)
             for i in range(n_frames)
         ],
@@ -124,43 +133,85 @@ def frame_energy_db(x: np.ndarray, frame_length: int, hop_length: int) -> np.nda
 
 # TODO @Galtan-dev: why this?!?
 def subtract_noise_energy(edb: np.ndarray, fs: int, hop_length: int) -> np.ndarray:
-    """TODO @Galtan-dev: docstring."""
+    """
+    Function which substract guesed noise energy from sound signal.
+    It ensures that recordings from low quality datasets or dataset
+    recorded in noise conditions are cleaned form noise and suitable for
+    trim and other preprocesing steps
+    """
+    # calculate how much of beginning of signal is used to guessed noise
+    # fs/hop_length converts seconds to number of frames
+    # min from len(edb) ensure that lenght of signal is not exceeded
     n_noise = min(max(1, int(NOISE_EST_S * fs / hop_length)), len(edb))
+    # from selected frames is taken median of energy
     noise_level_db = float(np.median(edb[:n_noise]))
+    # meadian of energy is substracted from original signal
+    # max ensure that any value will not drop under 100 dB, which is considered to by silence
     return np.maximum(edb - noise_level_db, -100.0)
 
 
 # TODO @Galtan-dev: why this?!?
 def adaptive_silence_threshold(edb: np.ndarray) -> float:
-    """TODO @Galtan-dev: docstring."""
+    """
+    Function for calcualtion of decibel level under which is all considered to by silence.
+    Adaptive for various recordings.
+    """
+    # takes 10.percentil of energy of frames
     noise_floor = float(np.percentile(edb, 10))
+    # takes 90.percentil of energy of frames
     voiced_peak = float(np.percentile(edb, 90))
+    # now dynamical range of signal is taken and by silence ration
+    # modifier level, under which is all considered to be noise, is set.
+    # Level is set as SILENCE_RATIO percent from dynamical range
     return noise_floor + SILENCE_RATIO * (voiced_peak - noise_floor)
 
 
 def find_first_repetition(x: np.ndarray, fs: int) -> tuple[int, list[tuple[int, int]], float]:
-    """TODO @Galtan-dev: docstring."""
+    """
+    Function for cutting out first repetition of vowel from recordings in AVFAD dataset
+    """
+    # length of window in which search is conducted
+    # minimaly length of 4
     frame_length = max(4, int(WINDOW_S * fs))
+    # step of shift of window
     hop_length = max(1, frame_length // 2)
+    # calculates frame energy for every window
     edb = frame_energy_db(x, frame_length, hop_length)
+    # substract energy of noise from signal
     edb_clean = subtract_noise_energy(edb, fs, hop_length)
+    # find adaptive threshold of noise
     thresh = adaptive_silence_threshold(edb_clean)
+    # make bolean field, where signal is silence this is True
     silent = edb_clean < thresh
     n_frames = len(edb_clean)
-
+    # return index of first frame which is not silenced
     first_voiced = next((i for i, s in enumerate(silent) if not s), None)
+    # if nothing is found return length of signal and threshold
     if first_voiced is None:
         return len(x), [], thresh
 
+    # definition of varibles
     pauses, in_pause, p_start = [], False, 0
+    # cycle which walk through signal from first fram where is not silence
     for i in range(first_voiced, n_frames):
+        # this if detect frame where is silence but algorithm is not yet in pause betwene repetitions
+        # it is transition from speaking to silence
         if silent[i] and not in_pause:
+            # index and flag is saved, from here algortim is "waiting" to silence end
             p_start, in_pause = i, True
+        # this detects frame which is not silenced but algorithm is in pause
         elif not silent[i] and in_pause:
+            # this checks minimal length of silence, short silence are not pauses
+            # betwene repetitions but some patologies or mistakes
             if (i - p_start) * hop_length / fs >= MIN_PAUSE_S:
+                # pause is long enough, save as tuple
                 pauses.append((p_start * hop_length, i * hop_length))
+            # resets flag, algorithm is back in voice
             in_pause = False
+    # take care of posibility when transition form silence to voice ius not detected
+    # minimal length is checked
     if in_pause and (n_frames - p_start) * hop_length / fs >= MIN_PAUSE_S:
+        # save end of pause o
         pauses.append((p_start * hop_length, len(x)))
 
     rep_end = len(x)

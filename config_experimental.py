@@ -167,12 +167,12 @@ config = {
     # ------------------------------------------------------------------
     "param_grid": [
         {
-            "clf__n_estimators": [400, 500],
+            "clf__n_estimators": [400],
             "clf__max_depth": [None, 5, 10],
             "clf__min_samples_split": [2, 5],
             "clf__min_samples_leaf": [1, 2],
-            "clf__max_features": [None, 0.3, 0.5],
-            "clf__max_samples": [0.6, 0.8, 1.0],
+            "clf__max_features": [None, 0.3],
+            "clf__max_samples": [0.6, 0.8],
             # "clf__bootstrap": [True, False],
             "clf__criterion": ["gini"],
             "clf__class_weight": ["balanced"],
