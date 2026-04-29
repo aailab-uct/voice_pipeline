@@ -3,17 +3,21 @@
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.feature_selection import SelectKBest, mutual_info_classif, SelectFromModel, RFECV
 from sklearn.model_selection import StratifiedGroupKFold
-from oversampling import SMOTESampler, VAESampler
+from oversampling import (
+    SMOTESampler, VAESampler,
+    BorderlineSMOTESampler, ADASYNSampler,
+    SMOTEENNSampler, KMeansSMOTESampler,
+)
 
 from custom_classifiers import KANClassifier
 
-sampling_rate = 48000
+sampling_rate = 50000
 
 config = {
     # ------------------------------------------------------------------
     # Experiment metadata
     # ------------------------------------------------------------------
-    "experiment_name": "debugging",
+    "experiment_name": "SMOTE_PAPER_smote_balanced",
     "experiment_description": "experiment",
 
     # ------------------------------------------------------------------
@@ -43,7 +47,7 @@ config = {
     # ------------------------------------------------------------------
     # Cross-validation & scoring
     # ------------------------------------------------------------------
-    "cv": StratifiedGroupKFold(n_splits=5),
+    "cv": StratifiedGroupKFold(n_splits=10),
     "scoring_mode": "multimetric",
     "refit_metric": "uar",
     "n_repeats": 1,          # 0 = vypnuto, jinak počet opakování repeated CV
@@ -126,7 +130,7 @@ config = {
         "mfcc__sr": sampling_rate,
         "mfcc__n_mfcc": 20,
 
-        "timedomain__enabled": False,
+        "timedomain__enabled": True,
         "timedomain__sr": sampling_rate,
         "timedomain__use_zcr": False,
         "timedomain__use_entropy": False,
@@ -136,7 +140,7 @@ config = {
         "zcr__enabled": False,
         "zcr__sr": sampling_rate,
 
-        "spectral__enabled": False,
+        "spectral__enabled": True,
         "spectral__sr": sampling_rate,
 
         "opensmile__enabled": False,
@@ -144,13 +148,13 @@ config = {
         "opensmile__feature_set": "GeMAPS",       # "GeMAPS" | "ComParE_2016"
         "opensmile__feature_level": "functionals",
 
-        "f0deriv__enabled": True,
+        "f0deriv__enabled": False,
         "f0deriv__sr": sampling_rate,
 
-        "nonlinear__enabled": True,
+        "nonlinear__enabled": False,
         "nonlinear__sr": sampling_rate,
 
-        "vocaltract__enabled": True,
+        "vocaltract__enabled": False,
         "vocaltract__sr": sampling_rate,
         "vocaltract__lp_order": 12,
 
@@ -172,11 +176,13 @@ config = {
         # ),
 
         # --- Resampling (train fold only) --------------------------------
-        "resampler": SMOTESampler(enabled=False, random_state=42, artificial_only=False, sampling_strategy="auto"),
-        # "resampler": VAESampler(enabled=True, random_state=42, artificial_only=False, sampling_strategy="auto"),
+        # Default placeholder — will be overridden by param_grid "resampler" list.
+        # If you don't want resampler in the grid, comment out the param_grid
+        # entry and uncomment one specific resampler here instead.
+        # "resampler": SMOTESampler(enabled=False, random_state=42),
 
         # --- Classifier --------------------------------------------------
-        "clf__instance": RandomForestClassifier(random_state=42, n_jobs=-1),
+        "clf__instance": RandomForestClassifier(random_state=42, n_jobs=None),
     },
 
     # ------------------------------------------------------------------
@@ -184,24 +190,40 @@ config = {
     # ------------------------------------------------------------------
     "param_grid": [
         {
-            "clf__n_estimators": [400, 500],
-            "clf__max_depth": [None, 5, 10],
-            "clf__min_samples_split": [2, 5],
-            "clf__min_samples_leaf": [1, 2],
-            "clf__max_features": [None, 0.3, 0.5],
+            # --- Resampler variants to compare ----------------------------
+            # Each entry is a fully configured instance. GridSearchCV will
+            # try every combination of resampler × classifier hyperparams.
+            # Remove any you don't need, or add variants with different
+            # hyperparameters (e.g. two BorderlineSMOTE with different k).
+            "resampler": [
+                SMOTESampler(enabled=True, random_state=42),
+                BorderlineSMOTESampler(enabled=True, random_state=42, kind="borderline-1"),
+                ADASYNSampler(enabled=True, random_state=42),
+                SMOTEENNSampler(enabled=True, random_state=42),
+                KMeansSMOTESampler(enabled=True, random_state=42),
+                # Also test without any resampling:
+                # SMOTESampler(enabled=False, random_state=42),
+            ],
+
+            # # --- Classifier -----------------------------------------------
+            # "clf__n_estimators": [400],
+            # "clf__max_depth": [None, 5],
+            # "clf__min_samples_split": [2],
+            # "clf__min_samples_leaf": [1],
+            # "clf__max_features": [None, 0.3],
+            # "clf__max_samples": [0.6],
+            # # "clf__bootstrap": [True, False],
+            # "clf__criterion": ["gini"],
+            # "clf__class_weight": ["balanced"],
+
+            "clf__n_estimators": [100, 200, 400, 500, 600],
+            "clf__max_depth": [None, 5, 10, 20, 30],
+            "clf__min_samples_split": [2, 5, 10],
+            "clf__min_samples_leaf": [1, 2, 3, 4, 5, 10],
+            "clf__max_features": ["sqrt", "log2", None, 0.3, 0.5],
             "clf__max_samples": [0.6, 0.8, 1.0],
             # "clf__bootstrap": [True, False],
-            "clf__criterion": ["gini"],
-            "clf__class_weight": ["balanced"],
-
-            # "clf__n_estimators": [100, 200, 400, 500, 600],
-            # "clf__max_depth": [None, 5, 10, 20, 30],
-            # "clf__min_samples_split": [2, 5, 10],
-            # "clf__min_samples_leaf": [1, 2, 3, 4, 5, 10],
-            # "clf__max_features": ["sqrt", "log2", None, 0.3, 0.5],
-            # "clf__max_samples": [0.6, 0.8, 1.0],
-            # "clf__bootstrap": [True, False],
-            # "clf__criterion": ["gini", "entropy"],
+            "clf__criterion": ["gini", "entropy"],
             # "clf__class_weight": ["balanced"],
 
             # "synthesizer__n_samples": [200, 300],

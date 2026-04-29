@@ -46,9 +46,11 @@ def tqdm_from_verbose(total, desc="GridSearch", unit="fit"):
 
     class StdoutProxy:
         def write(self, s):
-            old_stdout.write(s)
-            if "[CV] END" in s:
-                pbar.update(1)
+            if "[CV]" in s:
+                if "[CV] END" in s:
+                    pbar.update(1)
+            else:
+                old_stdout.write(s)
 
         def flush(self):
             old_stdout.flush()

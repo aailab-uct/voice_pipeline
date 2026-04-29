@@ -7,7 +7,6 @@ from pathlib import Path
 import numpy as np
 import argparse
 import socket
-import time
 
 from tqdm import tqdm
 from sklearn.preprocessing import StandardScaler, LabelEncoder
@@ -42,13 +41,14 @@ from feature_augmenters import FeatureAugmenter
 from oversampling import SMOTESampler
 from dataset_filtration import build_dataset
 from sklearn.ensemble import RandomForestClassifier
-from utils import (tqdm_from_verbose, ReplaceNaN, log_cv_class_distribution)
+from utils import (ReplaceNaN, log_cv_class_distribution)
 
 import warnings
 
 # shouldnt have impact on calculations
 warnings.filterwarnings("ignore", message="All-NaN slice encountered")
 warnings.filterwarnings("ignore", message="R^2 score is not well-defined with less than two samples")
+warnings.filterwarnings("ignore", message="R.*score is not well-defined with less than two samples")
 
 # ==========
 # 1) Build imblearn pipeline
@@ -147,7 +147,7 @@ def build_pipeline(pipeline_params: dict | None = None, random_state: int = 42) 
             ("resampler",   SMOTESampler(random_state=random_state)),
             ("clf",         pipeline_params.get(
                                 "clf__instance",
-                                RandomForestClassifier(random_state=random_state, n_jobs=-1),
+                                RandomForestClassifier(random_state=random_state, n_jobs=None),
                             )),
         ]
     )
@@ -277,6 +277,7 @@ def main(config: dict[str, Any] | None = None):
     """
     Run the pipeline.
     """
+    print("build dataset")
     X, y, groups, pathologies, datasets = build_dataset(
         excluded_pathologies=config["excluded_pathologies"],
         include_age=config["include_age"],
@@ -293,6 +294,23 @@ def main(config: dict[str, Any] | None = None):
 
     # 2) Build pipeline
     pipe = build_pipeline(config.get("pipeline", {}), random_state=config.get("random_state", 42))
+
+    # 2.1) Pre-warm feature cache sequentially so parallel workers inherit it.
+    # Only useful when caching is active (disabled when raw_aug or synthesizer is on).
+    _pipeline_cfg = config.get("pipeline", {})
+    _cache_active = (
+        not _pipeline_cfg.get("raw_aug__enabled", False)
+        and not (
+            _pipeline_cfg.get("synthesizer__enabled", False)
+            and _pipeline_cfg.get("synthesizer__n_samples", 0) > 0
+        )
+    )
+    if _cache_active:
+        from feature_extraction import cache as _feat_cache
+        print("Pre-warming feature cache...")
+        build_pipeline(config.get("pipeline", {}), random_state=config.get("random_state", 42)).fit(X, y)
+        _feat_cache.print_stats("after warmup")
+        _feat_cache.flush_to_disk()  # workers on Windows spawn fresh — they load from disk
 
     # 3) prepare CV
     cv = config.get("cv", StratifiedGroupKFold(n_splits=5))
@@ -328,22 +346,16 @@ def main(config: dict[str, Any] | None = None):
         cv=cv,
         scoring=scoring,
         refit=refit,
-        verbose=2,
+        verbose=0,
         error_score="raise",
-        n_jobs=None,  # -1 causes issues with caching as the forked processes copy the cache.
+        n_jobs=-1,
     )
 
-    # calculate number of iterations for tqdm in gridsearch
     n_candidates = len(list(ParameterGrid(param_grid)))
     n_folds = cv.get_n_splits(X, y, groups)
-    total_training_steps = n_candidates * n_folds
-
-    start_time = time.time()
-    with tqdm_from_verbose(total=total_training_steps):
-        grid_search.fit(X, y, groups=groups)
-    end_time = time.time()
-    print("Fit time:", end_time - start_time)
-    print("Size of training set:", len(y))
+    print(f"Running grid search: {n_candidates} candidates × {n_folds} folds = {n_candidates * n_folds} fits")
+    grid_search.fit(X, y, groups=groups)
+    print("Grid search done.")
 
     run_dir = log_results(
         grid_search.cv_results_,
@@ -382,5 +394,5 @@ if __name__ == "__main__":
     _ = parser.parse_args()
 
     parsed_config = import_module("config_experimental").config
-    print(parsed_config)
+    # print(parsed_config)
     main(parsed_config)

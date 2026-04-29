@@ -7,6 +7,8 @@ from sklearn.utils._param_validation import Interval, StrOptions
 from numbers import Real, Integral
 from src.nn import VAEModel
 from numpy.typing import NDArray
+from imblearn.over_sampling import BorderlineSMOTE, ADASYN, KMeansSMOTE
+from imblearn.combine import SMOTEENN
 
 
 def _compute_number_per_class(
@@ -422,3 +424,280 @@ class VAESampler(TunableBaseSampler):
         # Shuffle the resampled dataset
         perm = self.rng.permutation(X_res.shape[0])
         return X_res[perm], y_res[perm]
+
+
+# ── 1) Borderline-SMOTE ──────────────────────────────────────────────────────
+
+class BorderlineSMOTESampler(TunableBaseSampler):
+    """
+    Borderline-SMOTE: generates synthetic samples only from minority instances
+    near the decision boundary.
+
+    Extra parameters (beyond TunableBaseSampler):
+        kind : str, default="borderline-1"
+            "borderline-1" — oversample from borderline minority instances
+            "borderline-2" — also considers majority neighbors for interpolation
+        k_neighbors : int, default=5
+            Number of nearest neighbors for SMOTE interpolation.
+        m_neighbors : int, default=10
+            Number of nearest neighbors to determine if a sample is borderline.
+    """
+
+    _parameter_constraints: dict = {
+        "enabled": ["boolean"],
+        "additional_group_classes": ["array-like", Interval(Integral, 0, None, closed="left"), None],
+        "random_state": ["random_state"],
+        "sampling_strategy": ["array-like", Interval(Real, None, None, closed="neither"), StrOptions({"auto"})],
+        "artificial_only": ["boolean"],
+        "kind": [StrOptions({"borderline-1", "borderline-2"})],
+        "k_neighbors": [Interval(Integral, 1, None, closed="left")],
+        "m_neighbors": [Interval(Integral, 1, None, closed="left")],
+    }
+
+    def __init__(
+            self,
+            enabled: bool = True,
+            additional_group_classes: list | int | None = None,
+            random_state: int = 42,
+            artificial_only: bool = False,
+            sampling_strategy: str | float | dict = "auto",
+            kind: str = "borderline-1",
+            k_neighbors: int = 5,
+            m_neighbors: int = 10,
+    ):
+        super().__init__(
+            enabled=enabled,
+            additional_group_classes=additional_group_classes,
+            random_state=random_state,
+        )
+        self.artificial_only = artificial_only
+        self.sampling_strategy = sampling_strategy
+        self.kind = kind
+        self.k_neighbors = k_neighbors
+        self.m_neighbors = m_neighbors
+
+    def _resample(self, X: np.ndarray, y: np.ndarray, classes: np.ndarray, **params):
+        del params
+
+        sampler = BorderlineSMOTE(
+            sampling_strategy=self.sampling_strategy,
+            random_state=self.random_state,
+            k_neighbors=self.k_neighbors,
+            m_neighbors=self.m_neighbors,
+            kind=self.kind,
+        )
+        X_res, y_res = sampler.fit_resample(X, y)
+
+        if self.artificial_only:
+            X_res, y_res = X_res[len(X):], y_res[len(y):]
+
+        return X_res, y_res
+
+
+# ── 2) ADASYN ────────────────────────────────────────────────────────────────
+
+class ADASYNSampler(TunableBaseSampler):
+    """
+    ADASYN: Adaptive Synthetic Sampling. Generates more synthetic samples
+    in regions where the minority class is harder to learn (more majority
+    neighbors).
+
+    Extra parameters (beyond TunableBaseSampler):
+        n_neighbors : int, default=5
+            Number of nearest neighbors used to construct synthetic samples.
+    """
+
+    _parameter_constraints: dict = {
+        "enabled": ["boolean"],
+        "additional_group_classes": ["array-like", Interval(Integral, 0, None, closed="left"), None],
+        "random_state": ["random_state"],
+        "sampling_strategy": ["array-like", Interval(Real, None, None, closed="neither"), StrOptions({"auto"})],
+        "artificial_only": ["boolean"],
+        "n_neighbors": [Interval(Integral, 1, None, closed="left")],
+    }
+
+    def __init__(
+            self,
+            enabled: bool = True,
+            additional_group_classes: list | int | None = None,
+            random_state: int = 42,
+            artificial_only: bool = False,
+            sampling_strategy: str | float | dict = "auto",
+            n_neighbors: int = 5,
+    ):
+        super().__init__(
+            enabled=enabled,
+            additional_group_classes=additional_group_classes,
+            random_state=random_state,
+        )
+        self.artificial_only = artificial_only
+        self.sampling_strategy = sampling_strategy
+        self.n_neighbors = n_neighbors
+
+    def _resample(self, X: np.ndarray, y: np.ndarray, classes: np.ndarray, **params):
+        del params
+
+        sampler = ADASYN(
+            sampling_strategy=self.sampling_strategy,
+            random_state=self.random_state,
+            n_neighbors=self.n_neighbors,
+        )
+        X_res, y_res = sampler.fit_resample(X, y)
+
+        if self.artificial_only:
+            X_res, y_res = X_res[len(X):], y_res[len(y):]
+
+        return X_res, y_res
+
+
+# ── 3) SMOTE-ENN (hybrid: oversample + clean) ────────────────────────────────
+
+class SMOTEENNSampler(TunableBaseSampler):
+    """
+    SMOTE + Edited Nearest Neighbors: first oversamples the minority class
+    with SMOTE, then removes noisy/ambiguous samples from both classes
+    using ENN.
+
+    Note: artificial_only is NOT supported here — ENN deletes samples
+    from both original and synthetic data, so the boundary between them
+    is lost after cleaning.
+
+    Extra parameters (beyond TunableBaseSampler):
+        k_neighbors_smote : int, default=5
+            k for the SMOTE interpolation step.
+        n_neighbors_enn : int, default=3
+            k for the ENN cleaning step.
+    """
+
+    _parameter_constraints: dict = {
+        "enabled": ["boolean"],
+        "additional_group_classes": ["array-like", Interval(Integral, 0, None, closed="left"), None],
+        "random_state": ["random_state"],
+        "sampling_strategy": ["array-like", Interval(Real, None, None, closed="neither"), StrOptions({"auto"})],
+        "artificial_only": ["boolean"],
+        "k_neighbors_smote": [Interval(Integral, 1, None, closed="left")],
+        "n_neighbors_enn": [Interval(Integral, 1, None, closed="left")],
+    }
+
+    def __init__(
+            self,
+            enabled: bool = True,
+            additional_group_classes: list | int | None = None,
+            random_state: int = 42,
+            artificial_only: bool = False,
+            sampling_strategy: str | float | dict = "auto",
+            k_neighbors_smote: int = 5,
+            n_neighbors_enn: int = 3,
+    ):
+        super().__init__(
+            enabled=enabled,
+            additional_group_classes=additional_group_classes,
+            random_state=random_state,
+        )
+        self.artificial_only = artificial_only
+        self.sampling_strategy = sampling_strategy
+        self.k_neighbors_smote = k_neighbors_smote
+        self.n_neighbors_enn = n_neighbors_enn
+
+    def _resample(self, X: np.ndarray, y: np.ndarray, classes: np.ndarray, **params):
+        del params
+
+        from imblearn.over_sampling import SMOTE as _SMOTE
+        from imblearn.under_sampling import EditedNearestNeighbours
+
+        sampler = SMOTEENN(
+            smote=_SMOTE(
+                k_neighbors=self.k_neighbors_smote,
+                random_state=self.random_state,
+            ),
+            enn=EditedNearestNeighbours(
+                n_neighbors=self.n_neighbors_enn,
+            ),
+            sampling_strategy=self.sampling_strategy,
+            random_state=self.random_state,
+        )
+        X_res, y_res = sampler.fit_resample(X, y)
+
+        if self.artificial_only:
+            import warnings
+            warnings.warn(
+                "SMOTEENNSampler: artificial_only=True is ignored — "
+                "ENN cleaning removes from both original and synthetic data.",
+                UserWarning,
+                stacklevel=2,
+            )
+
+        return X_res, y_res
+
+
+# ── 4) KMeans-SMOTE ──────────────────────────────────────────────────────────
+
+class KMeansSMOTESampler(TunableBaseSampler):
+    """
+    KMeans-SMOTE: clusters the data first, then applies SMOTE within
+    clusters that have a high proportion of minority samples.
+    Generates samples in sparse minority regions, avoiding noise.
+
+    Extra parameters (beyond TunableBaseSampler):
+        k_neighbors : int, default=5
+            Number of nearest neighbors for SMOTE interpolation.
+        kmeans_estimator : int or KMeans, default=None
+            Number of clusters (int) or a fitted/unfitted KMeans instance.
+            If None, imblearn uses a default.
+        cluster_balance_threshold : float, default=0.1
+            Clusters with a minority ratio below this are skipped.
+            Lower = more selective (only very minority-dense clusters).
+    """
+
+    _parameter_constraints: dict = {
+        "enabled": ["boolean"],
+        "additional_group_classes": ["array-like", Interval(Integral, 0, None, closed="left"), None],
+        "random_state": ["random_state"],
+        "sampling_strategy": ["array-like", Interval(Real, None, None, closed="neither"), StrOptions({"auto"})],
+        "artificial_only": ["boolean"],
+        "k_neighbors": [Interval(Integral, 1, None, closed="left")],
+        "kmeans_estimator": [Interval(Integral, 1, None, closed="left"), None],
+        "cluster_balance_threshold": [Interval(Real, 0, None, closed="left")],
+    }
+
+    def __init__(
+            self,
+            enabled: bool = True,
+            additional_group_classes: list | int | None = None,
+            random_state: int = 42,
+            artificial_only: bool = False,
+            sampling_strategy: str | float | dict = "auto",
+            k_neighbors: int = 5,
+            kmeans_estimator=None,
+            cluster_balance_threshold: float = 0.1,
+    ):
+        super().__init__(
+            enabled=enabled,
+            additional_group_classes=additional_group_classes,
+            random_state=random_state,
+        )
+        self.artificial_only = artificial_only
+        self.sampling_strategy = sampling_strategy
+        self.k_neighbors = k_neighbors
+        self.kmeans_estimator = kmeans_estimator
+        self.cluster_balance_threshold = cluster_balance_threshold
+
+    def _resample(self, X: np.ndarray, y: np.ndarray, classes: np.ndarray, **params):
+        del params
+
+        kwargs = dict(
+            sampling_strategy=self.sampling_strategy,
+            random_state=self.random_state,
+            k_neighbors=self.k_neighbors,
+            cluster_balance_threshold=self.cluster_balance_threshold,
+        )
+        if self.kmeans_estimator is not None:
+            kwargs["kmeans_estimator"] = self.kmeans_estimator
+
+        sampler = KMeansSMOTE(**kwargs)
+        X_res, y_res = sampler.fit_resample(X, y)
+
+        if self.artificial_only:
+            X_res, y_res = X_res[len(X):], y_res[len(y):]
+
+        return X_res, y_res

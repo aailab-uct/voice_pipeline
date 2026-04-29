@@ -10,12 +10,12 @@ class FeatureCache:
 
     def __init__(self):
         """Initialize the feature cache."""
+        self.hits = 0
+        self.misses = 0
         self.cache_file = Path("feature_cache.pkl.gz")
         if self.cache_file.exists():
             with gzip.open(self.cache_file, "rb") as f:
                 self.cache = pickle.load(f)
-                print(f"Cache size: {len(self.cache)} items.")
-
         else:
             self.cache = {}
 
@@ -30,15 +30,22 @@ class FeatureCache:
         """Decorator to cache method results based on class name, input, and kwargs."""
 
         def wrapper(cls, x, kwargs):
-            name = cls.__name__
-            key = (name, x, kwargs)
+            key = (cls.__name__, x.hash, kwargs)
             if key in self.cache:
+                self.hits += 1
                 return self.cache[key]
+            self.misses += 1
             result = func(cls, x, kwargs)
             self.cache[key] = result
             return result
 
         return wrapper
+
+    def print_stats(self, label: str = "") -> None:
+        total = self.hits + self.misses
+        ratio = self.hits / total if total else 0.0
+        prefix = f"[{label}] " if label else ""
+        print(f"{prefix}Cache: {len(self.cache)} items | hits {self.hits} / misses {self.misses} ({ratio:.0%})")
 
     def invalidate(self, cls_name=None):
         """Invalidate cache entries for a specific class or all entries if cls_name is None."""

@@ -53,7 +53,7 @@ def per_pathology_recall(y_true, y_pred, pathologies, healthy_name="healthy", mi
         tn, fp, fn, tp = cm.ravel()
         tn, fp, fn, tp = int(tn), int(fp), int(fn), int(tp)
 
-        recall = recall_score(yt, yp, zero_division=0)
+        recall = recall_score(yt, yp, zero_division=0, average='macro')
         n_healthy = int((np.char.lower(pathologies[m].astype(str)) == healthy_name.lower()).sum())
 
         rows.append((p, recall, tp, fn, fp, tn, n_pathology, n_healthy))
