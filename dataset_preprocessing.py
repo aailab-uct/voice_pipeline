@@ -95,7 +95,27 @@ WINDOW_S = 0.05
 # TODO @Galtan-dev: why this?!?
 def frame_energy_db(x: np.ndarray, frame_length: int, hop_length: int) -> np.ndarray:
     """
-    Function which computes energy of sound signal in decibels
+    Compute per-frame energy of an audio signal in decibels.
+
+    The signal is divided into overlapping frames and the mean squared
+    energy of each frame is converted to decibels. A small constant
+    (1e-10) is added before the logarithm to avoid numerical errors.
+
+    Parameters
+    ----------
+    x : np.ndarray
+        Input audio signal as a 1-D array of samples.
+    frame_length : int
+        Length of each analysis frame in samples.
+    hop_length : int
+        Step size between consecutive frames in samples.
+
+    Returns
+    -------
+    np.ndarray
+        1-D array of float32 values representing per-frame energy in dB.
+        If the signal is shorter than one frame, returns ``[-100.0]``
+        (silence placeholder).
     """
     # coalculate number of frames that fit into the signal
     n_frames = (len(x) - frame_length) // hop_length + 1
@@ -116,10 +136,28 @@ def frame_energy_db(x: np.ndarray, frame_length: int, hop_length: int) -> np.nda
 # TODO @Galtan-dev: why this?!?
 def subtract_noise_energy(edb: np.ndarray, fs: int, hop_length: int) -> np.ndarray:
     """
-    Function which substract guesed noise energy from sound signal.
-    It ensures that recordings from low quality datasets or dataset
-    recorded in noise conditions are cleaned form noise and suitable for
-    trim and other preprocesing steps
+    Subtract estimated noise floor from per-frame energy values.
+
+    The noise level is estimated as the median energy of the first
+    few frames (controlled by ``NOISE_EST_S``). This makes downstream
+    processing (trimming, silence detection) more robust for recordings
+    from noisy environments or low-quality datasets.
+
+    Parameters
+    ----------
+    edb : np.ndarray
+        Per-frame energy in dB, as returned by ``frame_energy_db``.
+    fs : int
+        Sampling rate in Hz.
+    hop_length : int
+        Step size between consecutive frames in samples. Used together
+        with `fs` to convert ``NOISE_EST_S`` from seconds to frames.
+
+    Returns
+    -------
+    np.ndarray
+        Noise-subtracted energy array of the same shape as `edb`.
+        Values are clipped to a minimum of -100.0 dB (silence floor).
     """
     # calculate how much of beginning of signal is used to guessed noise
     # fs/hop_length converts seconds to number of frames
@@ -135,8 +173,25 @@ def subtract_noise_energy(edb: np.ndarray, fs: int, hop_length: int) -> np.ndarr
 # TODO @Galtan-dev: why this?!?
 def adaptive_silence_threshold(edb: np.ndarray) -> float:
     """
-    Function for calcualtion of decibel level under which is all considered to by silence.
-    Adaptive for various recordings.
+    Compute an adaptive silence threshold based on the dynamic range.
+
+    The threshold is placed between the noise floor (10th percentile)
+    and the voiced peak (90th percentile) of the frame energies. Its
+    exact position is controlled by ``SILENCE_RATIO`` — e.g. a value
+    of 0.3 places the threshold at 30 % of the dynamic range above
+    the noise floor. This makes the detection robust across recordings
+    with different overall loudness levels.
+
+    Parameters
+    ----------
+    edb : np.ndarray
+        Per-frame energy in dB, typically after noise subtraction.
+
+    Returns
+    -------
+    float
+        Silence threshold in dB. Frames with energy below this value
+        are considered silent.
     """
     # takes 10.percentil of energy of frames
     noise_floor = float(np.percentile(edb, 10))
@@ -150,7 +205,42 @@ def adaptive_silence_threshold(edb: np.ndarray) -> float:
 
 def find_first_repetition(x: np.ndarray, fs: int) -> tuple[int, list[tuple[int, int]], float]:
     """
-    Function for cutting out first repetition of vowel from recordings in AVFAD dataset
+    Locate the end of the first vowel repetition in an AVFAD recording.
+
+    The function analyses per-frame energy to detect pauses between
+    repetitions. The first pause that occurs after at least
+    ``MIN_REP_S`` seconds of signal is taken as the boundary between
+    the first and second repetition.
+
+    Parameters
+    ----------
+    x : np.ndarray
+        Input audio signal as a 1-D array of samples.
+    fs : int
+        Sampling rate in Hz.
+
+    Returns
+    -------
+    rep_end : int
+        Sample index where the first repetition ends. If no suitable
+        pause is found, equals ``len(x)`` (the whole signal).
+    pauses : list of tuple(int, int)
+        All detected pauses as ``(start_sample, end_sample)`` pairs.
+        Useful for diagnostics and visualisation.
+    thresh : float
+        The adaptive silence threshold in dB that was used for
+        detection.
+
+    Notes
+    -----
+    The detection pipeline consists of the following steps:
+
+    1. Compute per-frame energy in dB (``frame_energy_db``).
+    2. Subtract estimated noise floor (``subtract_noise_energy``).
+    3. Derive an adaptive silence threshold (``adaptive_silence_threshold``).
+    4. Walk through frames to collect pauses longer than ``MIN_PAUSE_S``.
+    5. Return the start of the first pause that is at least ``MIN_REP_S``
+       seconds into the signal.
     """
     # length of window in which search is conducted
     # minimaly length of 4
@@ -211,24 +301,77 @@ def find_first_repetition(x: np.ndarray, fs: int) -> tuple[int, list[tuple[int, 
 
 # TODO @Galtan-dev: why this?!?
 def trim_edges(x: np.ndarray, fs: int) -> np.ndarray:
-    fl = max(1, int(0.02 * fs))
-    hl = max(1, fl // 2)
-    edb = frame_energy_db(x, fl, hl)
+    """
+    Trim leading and trailing silence from an audio signal.
+
+    The function uses a short analysis window (20 ms) to compute
+    per-frame energy and then searches for the first and last stable
+    voiced regions. Two separate thresholds are used: a stricter one
+    for the onset (25 % of dynamic range) and a more lenient one for
+    the offset (18 %), which preserves natural voice decay at the end.
+    A minimum run length (60 ms) prevents transient events such as
+    clicks or pops from being mistaken for speech.
+
+    Primarily used for preprocessing recordings from the SVD dataset.
+
+    Parameters
+    ----------
+    x : np.ndarray
+        Input audio signal as a 1-D array of samples.
+    fs : int
+        Sampling rate in Hz.
+
+    Returns
+    -------
+    np.ndarray
+        Trimmed signal. If no stable voiced region is found, the
+        original signal is returned unchanged.
+
+    Notes
+    -----
+    The helper functions ``first_run`` and ``last_run`` scan a boolean
+    mask forward and backward respectively, looking for the first
+    occurrence of at least `min_run` consecutive ``True`` values. This
+    ensures that only sustained voiced activity triggers the trim
+    boundaries.
+    """
+    # window for analyzation
+    frame_length = max(1, int(0.02 * fs))
+    # step of shift of window
+    hop_length = max(1, frame_length // 2)
+    # calculates frame energy for every window
+    edb = frame_energy_db(x, frame_length, hop_length)
+    # takes percentile of energy and set it as floor
     noise_floor = float(np.percentile(edb, 10))
+    # takes percentile of energy and set is as max peak
     peak = float(np.percentile(edb, 95))
+    # threshold for start of recording(stricter)
+    # for silence before voice
     start_thr = noise_floor + 0.25 * (peak - noise_floor)
+    # threshold fo end of recording
+    # for silence afther voice
     end_thr = noise_floor + 0.18 * (peak - noise_floor)
-    min_run = max(1, int(0.06 * fs / hl))
+    # minimal count of peak voice (protection against short and load events, such as click)
+    min_run = max(1, int(0.06 * fs / hop_length))
+
 
     def first_run(mask, n):
+        """
+        Function which find place where is at last n consecutive True values.
+        """
         cnt = 0
+        # cycle in if condition is true counter grows, if False reset on 0.
         for i, v in enumerate(mask):
             cnt = cnt + 1 if v else 0
+            # afther n steps retrn back pn start index
             if cnt >= n:
                 return i - n + 1
         return None
 
     def last_run(mask, n):
+        """
+        Function with very similar function as function above, except backwards
+        """
         cnt = 0
         for i in range(len(mask) - 1, -1, -1):
             cnt = cnt + 1 if mask[i] else 0
@@ -236,16 +379,41 @@ def trim_edges(x: np.ndarray, fs: int) -> np.ndarray:
                 return i + n - 1
         return None
 
+    # call of function which find start of the voice (first stable louad area)
     s = first_run(edb >= start_thr, min_run)
+    # call of functiopn which find end pf voice (last stable load area)
     e = last_run(edb >= end_thr, min_run)
+
+    # protection, if end or start was not found, retrn original signal.
     if s is None or e is None:
         return x
-    start, end = s * hl, min(len(x), e * hl + fl)
+    # transformaton of index of frames to samples
+    start, end = s * hop_length, min(len(x), e * hop_length + frame_length)
+    # return cut signal or original
     return x[start:end] if end > start else x
 
 
 # TODO @Galtan-dev: why this?!?
 def rms_normalize(x: np.ndarray) -> np.ndarray:
+    """
+    Normalize an audio signal to a target RMS loudness level.
+
+    The signal is scaled so that its root mean square (RMS) value
+    matches ``TARGET_RMS``. If the current RMS is below ``MIN_RMS``
+    (near-silence), the signal is returned unchanged to avoid
+    extreme amplification of noise.
+
+    Parameters
+    ----------
+    x : np.ndarray
+        Input audio signal as a 1-D array of samples.
+
+    Returns
+    -------
+    np.ndarray
+        Amplitude-scaled signal with RMS equal to ``TARGET_RMS``,
+        or the original signal if its RMS was below ``MIN_RMS``.
+    """
     rms = float(np.sqrt(np.mean(x**2)))
     return (TARGET_RMS / rms) * x if rms > MIN_RMS else x
 
