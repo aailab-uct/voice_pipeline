@@ -94,19 +94,23 @@ def is_adult(age: int) -> bool:
 # Shared signal preprocessing
 # ============================================================
 
-# TODO @Galtan-dev: add comments
-TRIM_TOP_DB = 20    # relict, asi uplně vyhodit
+TRIM_TOP_DB = 20    # relict, asi uplně vyhodit, nebo tady ještě chybí funkce co to používá
 # target loundness to which is signal normalized
 TARGET_RMS = 0.1
 # threshold under which is normalization not applied (protection against amplification of noise)
 MIN_RMS = 1e-6
 
 # AVFAD crop parametry
-# gues of time of silence on the beginning of signal
+#time of beginning of signal used for gues of noise
 NOISE_EST_S = 0.1
+# threshold for placing line betwene noise and voice
 SILENCE_RATIO = 0.3
+# silence must be at last 150 ms long to be taken as pause
 MIN_PAUSE_S = 0.15
+# koeficient used for minimal time of pause in repetitons
+# (first pause muset be at last 0.5 s form start of record to be taken as pause betwene repetitions)
 MIN_REP_S = 0.5
+# length of analytical window for energy calculation
 WINDOW_S = 0.05
 
 
@@ -211,14 +215,19 @@ def find_first_repetition(x: np.ndarray, fs: int) -> tuple[int, list[tuple[int, 
     # take care of posibility when transition form silence to voice ius not detected
     # minimal length is checked
     if in_pause and (n_frames - p_start) * hop_length / fs >= MIN_PAUSE_S:
-        # save end of pause o
+        # save end of pause with len(x) to save exact location of end of pause
         pauses.append((p_start * hop_length, len(x)))
 
+    # default value for case any pause is not found
     rep_end = len(x)
+    # go through all found pauses and take start of them
     for pause_start, _ in pauses:
+        # filter pauses to soon from the start of signal
         if pause_start / fs >= MIN_REP_S:
+            # if first pause meets condition end cycle
             rep_end = pause_start
             break
+    # return position fo first repetition and all pauses
     return rep_end, pauses, thresh
 
 
