@@ -67,28 +67,6 @@ class Metadata(BaseModel):
     computable_f0: bool | None = Field(default=None)  # whether the mean F0 is computable for the signal
 
 
-# ============================================================
-# Filtering
-# ============================================================
-
-MIN_AGE = 18
-
-
-def is_adult(age: int) -> bool:
-    """Check whether a participant is an adult.
-
-    Parameters
-    ----------
-    age : object
-        Age value that can be converted to ``float``.
-
-    Returns
-    -------
-    bool
-        ``True`` if ``age`` is greater than or equal to ``MIN_AGE``.
-    """
-    return float(age) >= MIN_AGE
-
 
 # ============================================================
 # Shared signal preprocessing

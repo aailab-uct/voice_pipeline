@@ -146,6 +146,7 @@ def run_experiment(config: dict[str, Any]):
         selected_datasets=config["selected_datasets"],
         selected_fs=config["selected_fs"],
         drop_nan_f0=config.get("drop_nan_f0", True),
+        drop_children=config.get("drop_children", True),
     )
     groups = LabelEncoder().fit_transform(groups)
 

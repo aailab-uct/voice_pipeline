@@ -16,6 +16,29 @@ import librosa
 AUDIO_DIR = Path("dataset")
 METADATA_CSV = Path("dataset/metadata.csv")
 
+
+# ============================================================
+# Filtering
+# ============================================================
+
+MIN_AGE = 18
+
+
+def is_adult(age: int) -> bool:
+    """Check whether a participant is an adult.
+
+    Parameters
+    ----------
+    age : object
+        Age value that can be converted to ``float``.
+
+    Returns
+    -------
+    bool
+        ``True`` if ``age`` is greater than or equal to ``MIN_AGE``.
+    """
+    return float(age) >= MIN_AGE
+
 # ============================================================
 # Public API
 # ============================================================
@@ -30,6 +53,7 @@ def build_dataset(
     selected_datasets: set[str] | str | None = None,
     selected_fs: int | None = None,
     drop_nan_f0: bool = True,
+    drop_children: bool = True,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Build arrays used by the sklearn pipeline.
 
@@ -97,6 +121,8 @@ def build_dataset(
         if selected_datasets is not None and row["dataset"] not in selected_datasets:
             continue
         if drop_nan_f0 and row.get("nan_f0") == "True":
+            continue
+        if drop_children and not is_adult(row["age"]):
             continue
 
         record_id = row["id"]
