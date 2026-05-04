@@ -191,20 +191,88 @@ Seznam slovníků s explicitními hodnotami pro grid search (scikit-learn formá
 
 Konfigurace hyperparametrové optimalizace. Sekce `search` definuje backend a jeho parametry, sekce `param_space` definuje co se optimalizuje.
 
-### search
+### Dostupné backendy
+
+#### optuna
+Bayesovská optimalizace — učí se z předchozích triálů a cílí na slibné oblasti prostoru. Nejefektivnější pro velké nebo spojité prostory.
+
 | Parametr | Typ | Popis |
 |---|---|---|
-| `backend` | string | Metoda optimalizace — `optuna`, `gridsearch`, `randomsearch`, `halving` |
 | `metric` | string | Optimalizovaná metrika — `uar`, `accuracy`, `f1`, ... |
-| `direction` | string | Směr optimalizace — `maximize` nebo `minimize` |
-| `n_trials` | int | Počet triálů (Optuna, RandomSearch) |
-| `sampler` | string | Sampler pro Optuna — `TPE`, `CmaEs`, `Random`, `Grid` |
-| `pruner` | string | Pruner pro Optuna — `median`, `hyperband`, `none` |
-| `n_iter` | int | Počet iterací pro RandomSearch |
-| `factor` | int | Redukční faktor pro Halving |
-| `n_jobs` | int | Počet paralelních vláken |
+| `direction` | string | `maximize` nebo `minimize` |
+| `n_trials` | int | Celkový počet triálů |
+| `sampler` | string | Algoritmus vzorkování — viz tabulka níže |
+| `pruner` | string | Algoritmus pruning — viz tabulka níže |
+| `n_jobs` | int | Počet paralelních triálů |
 | `timeout` | int/null | Časový limit v sekundách (`null` = bez limitu) |
 | `random_state` | int | Seed pro reprodukovatelnost |
+
+**Samplery:**
+| Hodnota | Popis |
+|---|---|
+| `TPE` | Tree-structured Parzen Estimator — výchozí, dobře funguje pro většinu úloh |
+| `CmaEs` | CMA-ES — vhodné pro spojité prostory s mnoha parametry |
+| `Random` | Čistě náhodné vzorkování (bez učení) |
+| `Grid` | Vyčerpávající mřížka (jako gridsearch, ale přes Optuna) |
+| `QMC` | Quasi-Monte Carlo — rovnoměrnější pokrytí než Random |
+| `NSGAII` | Genetický algoritmus pro multi-objective optimalizaci |
+
+**Prunery** (předčasné zastavení slabých triálů):
+| Hodnota | Popis |
+|---|---|
+| `median` | Zastaví trial pokud je pod mediánem ostatních ve stejném kroku |
+| `hyperband` | Hyperband — agresivnější, vhodné pro velké počty triálů |
+| `successive_halving` | Podobné Hyperbandu, jednodušší varianta |
+| `none` | Bez pruningu — každý trial doběhne do konce |
+
+---
+
+#### gridsearch
+Vyčerpávající prohledání všech kombinací z `choices`. Garantuje nalezení optima v dané mřížce, ale škáluje exponenciálně.
+
+| Parametr | Typ | Popis |
+|---|---|---|
+| `metric` | string | Optimalizovaná metrika |
+| `refit` | bool | Přetrénovat nejlepší model na celém trénovacím setu |
+| `n_jobs` | int | Počet paralelních vláken |
+| `verbose` | int | Úroveň výpisu (`0` = ticho, `2` = každá kombinace) |
+
+> Používá pouze klíč `choices` z `param_space`. Klíče `low`/`high` jsou ignorovány.
+
+---
+
+#### randomsearch
+Náhodné vzorkování kombinací — rychlejší než grid search, prakticky srovnatelné výsledky při dostatečném `n_iter`.
+
+| Parametr | Typ | Popis |
+|---|---|---|
+| `metric` | string | Optimalizovaná metrika |
+| `n_iter` | int | Počet náhodně vzorkovaných kombinací |
+| `refit` | bool | Přetrénovat nejlepší model na celém trénovacím setu |
+| `n_jobs` | int | Počet paralelních vláken |
+| `verbose` | int | Úroveň výpisu |
+| `random_state` | int | Seed pro reprodukovatelnost |
+
+> Pokud je zadán `choices`, vzorkuje z výčtu. Pokud je zadán `low`/`high`, vzorkuje uniformně z rozsahu.
+
+---
+
+#### halving
+Successive Halving — začíná s mnoha kandidáty na malém počtu dat, v každém kole eliminuje nejslabší polovinu a zdvojnásobí data. Výrazně rychlejší než gridsearch při srovnatelné kvalitě.
+
+| Parametr | Typ | Popis |
+|---|---|---|
+| `metric` | string | Optimalizovaná metrika |
+| `refit` | bool | Přetrénovat nejlepší model na celém trénovacím setu |
+| `factor` | int | Redukční faktor — `3` znamená v každém kole přežije 1/3 kandidátů |
+| `min_resources` | string/int | Minimální zdroje (vzorky) v prvním kole — `exhaust`, `smallest`, nebo číslo |
+| `aggressive_elimination` | bool | Agresivnější eliminace při nedostatku kol |
+| `n_jobs` | int | Počet paralelních vláken |
+| `random_state` | int | Seed pro reprodukovatelnost |
+
+> Používá `choices` stejně jako gridsearch. Kombinuje se s `HalvingGridSearchCV` nebo `HalvingRandomSearchCV`.
+
+---
 
 ### param_space
 Každý klíč odpovídá parametru pipeline ve tvaru `krok__parametr`. Hodnota definuje prostor prohledávání.
@@ -226,3 +294,77 @@ Přepínače pro generování grafů po dokončení experimentu.
 |---|---|---|
 | `plot_uar_per_pathology` | bool | Graf UAR pro každou patologii zvlášť |
 | `plot_feature_histograms` | bool | Histogramy distribucí příznaků |
+
+---
+
+## dataset_builder.json
+
+Konfigurace skriptu pro sestavení datasetu ze surových nahrávek. Týká se fáze před ML pipeline — konverze, ořez, normalizace a uložení do jednotného formátu.
+
+### output
+| Parametr | Typ | Popis |
+|---|---|---|
+| `out_dir` | string | Výstupní složka pro WAV soubory |
+| `metadata_csv` | string | Cesta k výstupnímu CSV s metadaty |
+
+### filtering
+| Parametr | Typ | Popis |
+|---|---|---|
+| `min_age` | int | Minimální věk mluvčího — záznamy mladších mluvčích jsou přeskočeny |
+
+### f0
+| Parametr | Typ | Popis |
+|---|---|---|
+| `ranges.m` | [float, float] | Rozsah F0 pro muže v Hz — `[fmin, fmax]` |
+| `ranges.f` | [float, float] | Rozsah F0 pro ženy v Hz — `[fmin, fmax]` |
+| `default_range` | [float, float] | Záložní rozsah F0 pokud pohlaví není známé |
+
+### signal_normalization
+Společné parametry normalizace signálu platné pro všechny datasety, pokud není dataset-specifická hodnota definována.
+
+| Parametr | Typ | Popis |
+|---|---|---|
+| `target_rms` | float | Cílová RMS hodnota po normalizaci |
+| `min_rms` | float | Minimální RMS — signál s nižší hodnotou není normalizován (ochrana před dělením nulou) |
+| `trim_top_db` | int | Práh v dB pro ořez ticha na začátku a konci signálu |
+
+### datasets
+
+Každý dataset má vlastní podsekci. Dataset-specifická hodnota `trim_top_db` přepisuje globální hodnotu z `signal_normalization`.
+
+#### SVD
+| Parametr | Typ | Popis |
+|---|---|---|
+| `root` | string | Kořenová složka datasetu |
+| `metadata_csv` | string | Cesta k CSV s metadaty mluvčích |
+| `session_ids_to_delete` | list[int] | Blacklist session ID — záznamy s tímto ID jsou přeskočeny |
+
+#### PVQD
+| Parametr | Typ | Popis |
+|---|---|---|
+| `root` | string | Kořenová složka datasetu |
+| `demographics_xlsx` | string | Cesta k XLSX souboru s demografickými údaji |
+| `trim_top_db` | int | Přepisuje globální `trim_top_db` pro tento dataset |
+
+#### VOICED
+| Parametr | Typ | Popis |
+|---|---|---|
+| `root` | string | Kořenová složka datasetu |
+| `trim_top_db` | int | Přepisuje globální `trim_top_db` pro tento dataset |
+| `frame_length_factor` | int | Čitatel pro výpočet `frame_length = factor * fs // reference_fs` |
+| `hop_length_factor` | int | Čitatel pro výpočet `hop_length = factor * fs // reference_fs` |
+| `reference_fs` | int | Referenční vzorkovací frekvence ze které byly faktory odvozeny |
+
+#### AVFAD
+| Parametr | Typ | Popis |
+|---|---|---|
+| `root` | string | Kořenová složka datasetu |
+| `xlsx` | string | Cesta k XLSX souboru s metadaty |
+| `sheet` | string | Název listu v XLSX souboru |
+| `crop_to_one_rep` | bool | Oříznout nahrávku na první repetici samohlásky |
+| `noise_est_s` | float | Délka okna pro odhad šumové hladiny v sekundách |
+| `silence_ratio` | float | Podíl dynamického rozsahu určující práh ticha |
+| `min_pause_s` | float | Minimální délka pauzy považované za hranici repetice (s) |
+| `min_rep_s` | float | Minimální délka první repetice — kratší jsou ignorovány (s) |
+| `window_s` | float | Délka framu pro výpočet energie signálu (s) |
+| `files` | object | Mapování přípon souborů na samohlásky — `{"001": "i", "002": "a", ...}` |
