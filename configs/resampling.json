@@ -1,0 +1,9 @@
+{
+  "resampler": {
+    "type": "SMOTESampler",
+    "enabled": false,
+    "random_state": 42,
+    "artificial_only": false,
+    "sampling_strategy": "auto"
+  }
+}
