@@ -1,0 +1,38 @@
+{
+  "raw_augmentation": {
+    "enabled": false,
+    "sr": 48000,
+    "noise": true,
+    "gain": true,
+    "polarity": false,
+    "time_crop": false,
+    "pitch_shift": false,
+    "time_stretch": false,
+    "reverb": false,
+    "codec": false,
+    "noise_std": 0.005,
+    "gain_min": 0.8,
+    "gain_max": 1.2,
+    "crop_min_frac": 0.8,
+    "pitch_semitones_range": [-2.0, 2.0],
+    "stretch_rate_range": [0.9, 1.1],
+    "reverb_decay": 10.0,
+    "random_state": 42
+  },
+  "waveform_synthesis": {
+    "enabled": false,
+    "sr": 48000,
+    "noise": true,
+    "gain": true,
+    "polarity": true,
+    "time_crop": true,
+    "pitch_shift": true,
+    "time_stretch": true,
+    "reverb": true,
+    "codec": true,
+    "noise_std": 0.005,
+    "gain_min": 0.8,
+    "gain_max": 1.2,
+    "random_state": 42
+  }
+}
