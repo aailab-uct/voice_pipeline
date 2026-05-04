@@ -5,6 +5,7 @@ loads data, builds the pipeline, runs cross-validation, and saves outputs.
 Lower-level signal processing and model components live in ``voice_pipeline``.
 """
 
+import json
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 from typing import Any
@@ -65,6 +66,48 @@ def load_config(config_path: str) -> dict:
         raise AttributeError(f"Config file {path} must define a variable named 'config'.")
 
     return module.config
+
+
+def load_json_configs(configs_dir: str | Path = "configs") -> dict[str, Any]:
+    """Load all JSON configuration files from a directory.
+
+    Each ``.json`` file in ``configs_dir`` is loaded into a separate key of the
+    returned dict, using the filename stem as the key (e.g. ``experiment.json``
+    → ``result["experiment"]``). Files are processed in alphabetical order.
+
+    Parameters
+    ----------
+    configs_dir : str or Path, optional
+        Path to the directory containing ``.json`` config files.
+        Defaults to ``"configs"`` relative to the current working directory.
+
+    Returns
+    -------
+    dict[str, Any]
+        Mapping of filename stem to parsed JSON content, e.g.::
+
+            {
+                "experiment":      {...},
+                "dataset_builder": {...},
+                "search":          {...},
+            }
+
+    Raises
+    ------
+    FileNotFoundError
+        If ``configs_dir`` does not exist or is not a directory.
+    json.JSONDecodeError
+        If any ``.json`` file contains invalid JSON.
+    """
+    configs_dir = Path(configs_dir)
+    if not configs_dir.is_dir():
+        raise FileNotFoundError(f"Configs directory not found: {configs_dir}")
+
+    # sorted() ensures deterministic load order across platforms
+    return {
+        path.stem: json.loads(path.read_text(encoding="utf-8"))
+        for path in sorted(configs_dir.glob("*.json"))
+    }
 
 
 def build_scoring(scoring_mode: str):
