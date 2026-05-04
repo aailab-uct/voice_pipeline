@@ -1,0 +1,26 @@
+--- # obecné
+  fs: 44100
+  channels: 2
+--- # pipeline
+feature_extractor:
+  feature:
+    type: MFCC
+    params:
+      n_mfcc: 13
+      n_fft: 2048
+      hop_length: 512
+  feature:
+    type: TimeDomain
+    params: {}
+scaler:
+  type: StandardScaler
+  params: {}
+feature_selector:
+  type: SelectFromModel
+  params:
+    k: 10
+classifier:
+  type: RandomForestClassifier
+  params:
+    n_estimators: 100
+    random_state: 42
