@@ -1,26 +1,69 @@
---- # obecné
-  fs: 44100
-  channels: 2
---- # pipeline
-feature_extractor:
-  feature:
-    type: MFCC
-    params:
-      n_mfcc: 13
-      n_fft: 2048
-      hop_length: 512
-  feature:
-    type: TimeDomain
-    params: {}
-scaler:
-  type: StandardScaler
-  params: {}
-feature_selector:
-  type: SelectFromModel
-  params:
-    k: 10
-classifier:
+# =============================================================================
+# Experiment
+# =============================================================================
+
+experiment:
+  name: default
+  description: ""
+
+dataset:
+  selected: [SVD]
+  fs: 50000
+  vowels: [a]
+  intonations: [n]
+  include_age: true
+  include_sex: true
+  excluded_pathologies:
+    - Sängerstimme
+    - Poltersyndrom
+    - Stuttering
+    - Singing voice
+    - Singing voice ; Vocal fold nodules
+    - Dysphonia ; Mutatio
+    - Dysodia
+    - Sigmatism
+    - Non-fluency-Syndrom
+    - Mutatio
+    - Stuttering ; Laryngitis
+    - Dysodia ; Hyperfunctional dysphonia
+
+search:
+  backend: gridsearch
+  metric: uar
+
+# =============================================================================
+# Pipeline
+# =============================================================================
+features:
+  timedomain:
+
+resampler:
+  type: SMOTESampler
+  sampling_strategy: auto
+  artificial_only: false
+
+clf:
   type: RandomForestClassifier
-  params:
-    n_estimators: 100
-    random_state: 42
+  n_estimators: 200
+  max_depth: null
+  min_samples_split: 2
+  min_samples_leaf: 1
+  max_features: sqrt
+  max_samples: null
+  criterion: gini
+  class_weight: balanced
+
+# =============================================================================
+# Evaluation
+# =============================================================================
+
+cross_validation:
+  type: StratifiedGroupKFold
+  n_splits: 5
+  scoring_mode: multimetric
+  refit_metric: uar
+  n_repeats: 1
+
+visualization:
+  plot_uar_per_pathology: true
+  plot_feature_histograms: true

@@ -296,7 +296,9 @@ class TimeDomainFeaturesExtractor(FeatureExtractor):
 
         pitch_data = pitch.selected_array["frequency"]
         pitch_data[pitch_data == 0] = np.nan
-        diff_pitch = (np.nanmax(pitch_data) - np.nanmin(pitch_data)) / np.nanmin(pitch_data)
+        # suppress numpy warning when all frames are unvoiced (all-NaN slice) — result is NaN, handled by nan_to_num below
+        with np.errstate(all="ignore"):
+            diff_pitch = (np.nanmax(pitch_data) - np.nanmin(pitch_data)) / np.nanmin(pitch_data)
 
         harmonicity = call(sound, "To Harmonicity (cc)", 0.01, fmin, 0.1, 1.0)
         hnr = call(harmonicity, "Get mean", 0, 0)
