@@ -171,6 +171,91 @@ def build_pipeline(pipeline_params: dict | None = None, random_state: int = 42) 
     return pipe
 
 
+_EXTRACTION_PREFIXES = (
+    "raw_aug__", "synthesizer__", "mfcc__", "timedomain__", "zcr__",
+    "spectral__", "f0deriv__", "nonlinear__", "vocaltract__", "opensmile__",
+)
+
+
+def build_feature_pipeline(pipeline_params: dict | None = None, random_state: int = 42) -> ImbPipeline:
+    """
+    Pipeline with only feature extraction steps.
+
+    Used to pre-compute features once before GridSearchCV so that workers
+    receive a plain numeric matrix instead of raw waveforms, eliminating
+    the pickle overhead that prevents effective parallelism.
+
+    Only valid when raw_aug and synthesizer are both disabled — if waveforms
+    are modified per-fit, features must be recomputed inside GridSearch.
+    """
+    if pipeline_params is None:
+        pipeline_params = {}
+
+    pipe = ImbPipeline(steps=[
+        ("raw_aug",     RawAugmenter(random_state=random_state)),
+        ("synthesizer", WaveformSynthesizer(enabled=False, n_samples=0, random_state=random_state)),
+        ("mfcc",        MFCCExtractor()),
+        ("timedomain",  TimeDomainFeaturesExtractor()),
+        ("zcr",         ZCRExtractor()),
+        ("spectral",    SpectralFeaturesExtractor()),
+        ("f0deriv",     F0DerivativesExtractor()),
+        ("nonlinear",   NonlinearExtractor()),
+        ("vocaltract",  VocalTractExtractor()),
+        ("opensmile",   OpenSmileExtractor()),
+        ("drop_sig",    DropSignalColumn()),
+        ("replace_nan", ReplaceNaN()),
+    ])
+
+    params = {k: v for k, v in pipeline_params.items()
+              if any(k.startswith(p) for p in _EXTRACTION_PREFIXES)}
+    if params:
+        pipe.set_params(**params)
+
+    return pipe
+
+
+def build_search_pipeline(pipeline_params: dict | None = None, random_state: int = 42) -> ImbPipeline:
+    """
+    Pipeline with only classification steps (scaler → clf) for use after
+    features have been pre-computed by build_feature_pipeline.
+
+    Accepts the same pipeline_params dict as build_pipeline — extraction-related
+    keys are silently ignored since those steps are not present here.
+    """
+    if pipeline_params is None:
+        pipeline_params = {}
+
+    pipe = ImbPipeline(steps=[
+        ("scaler",   StandardScaler()),
+        ("selector", pipeline_params.get("selector__instance", "passthrough")),
+        ("feat_aug", FeatureAugmenter(random_state=random_state)),
+        ("resampler", pipeline_params.get("resampler", SMOTESampler(random_state=random_state))),
+        ("clf",      pipeline_params.get(
+                         "clf__instance",
+                         RandomForestClassifier(random_state=random_state, n_jobs=None),
+                     )),
+    ])
+
+    params = dict(pipeline_params)
+    selector_enabled = params.pop("selector__enabled", True)
+    params.pop("selector__instance", None)
+    params.pop("clf__instance", None)
+    params.pop("resampler", None)
+
+    # Drop extraction-related keys — not applicable to this pipeline
+    params = {k: v for k, v in params.items()
+              if not any(k.startswith(p) for p in _EXTRACTION_PREFIXES)}
+
+    if not selector_enabled:
+        pipe.set_params(selector="passthrough")
+        params = {k: v for k, v in params.items() if not k.startswith("selector__")}
+
+    if params:
+        pipe.set_params(**params)
+
+    return pipe
+
+
 def log_results(
     cv_results: dict[str, np.ndarray],
     experiment_name: str,
@@ -292,34 +377,41 @@ def main(config: dict[str, Any] | None = None):
     # 1.1) Encode groups to number
     groups = LabelEncoder().fit_transform(groups)
 
-    # 2) Build pipeline
-    pipe = build_pipeline(config.get("pipeline", {}), random_state=config.get("random_state", 42))
-
-    # 2.1) Pre-warm feature cache sequentially so parallel workers inherit it.
-    # Only useful when caching is active (disabled when raw_aug or synthesizer is on).
-    _pipeline_cfg = config.get("pipeline", {})
-    _cache_active = (
-        not _pipeline_cfg.get("raw_aug__enabled", False)
-        and not (
-            _pipeline_cfg.get("synthesizer__enabled", False)
-            and _pipeline_cfg.get("synthesizer__n_samples", 0) > 0
-        )
+    pipeline_cfg = config.get("pipeline", {})
+    random_state = config.get("random_state", 42)
+    raw_aug_on = pipeline_cfg.get("raw_aug__enabled", False)
+    synth_on = (
+        pipeline_cfg.get("synthesizer__enabled", False)
+        and pipeline_cfg.get("synthesizer__n_samples", 0) > 0
     )
-    if _cache_active:
-        from feature_extraction import cache as _feat_cache
-        print("Pre-warming feature cache...")
-        build_pipeline(config.get("pipeline", {}), random_state=config.get("random_state", 42)).fit(X, y)
-        _feat_cache.print_stats("after warmup")
-        _feat_cache.flush_to_disk()  # workers on Windows spawn fresh — they load from disk
+    can_preextract = not raw_aug_on and not synth_on
 
-    # 3) prepare CV
+    # 2) Feature extraction
+    # When augmentation is off, pre-compute features once so GridSearch workers
+    # receive a plain float matrix — no waveform pickling, full parallelism.
+    # When augmentation is on, waveforms must be re-processed per fit, so we
+    # fall back to the full pipeline inside GridSearch (n_jobs=1 to avoid cache issues).
+    if can_preextract:
+        from feature_extraction import cache as feat_cache
+        print("Extracting features...")
+        feat_pipe = build_feature_pipeline(pipeline_cfg, random_state=random_state)
+        X_search = feat_pipe.fit_transform(X, y)
+        feat_cache.print_stats("after extraction")
+        feat_cache.flush_to_disk()
+        pipe = build_search_pipeline(pipeline_cfg, random_state=random_state)
+        search_jobs = -1
+    else:
+        X_search = X
+        pipe = build_pipeline(pipeline_cfg, random_state=random_state)
+        search_jobs = 1  # waveform augmentation — cache can't be shared across workers
+
+    # 3) CV
     cv = config.get("cv", StratifiedGroupKFold(n_splits=5))
 
-    # 4) prepare grid search
+    # 4) Grid search
     param_grid = config["param_grid"]
 
     scoring_mode = config.get("scoring_mode", "multimetric")
-
     if scoring_mode == "multimetric":
         scoring = {
             "uar": make_scorer(balanced_accuracy_score),
@@ -348,13 +440,13 @@ def main(config: dict[str, Any] | None = None):
         refit=refit,
         verbose=0,
         error_score="raise",
-        n_jobs=-1,
+        n_jobs=search_jobs,
     )
 
     n_candidates = len(list(ParameterGrid(param_grid)))
-    n_folds = cv.get_n_splits(X, y, groups)
+    n_folds = cv.get_n_splits(X_search, y, groups)
     print(f"Running grid search: {n_candidates} candidates × {n_folds} folds = {n_candidates * n_folds} fits")
-    grid_search.fit(X, y, groups=groups)
+    grid_search.fit(X_search, y, groups=groups)
     print("Grid search done.")
 
     run_dir = log_results(
@@ -366,20 +458,20 @@ def main(config: dict[str, Any] | None = None):
 
     log_cv_class_distribution(y, groups, cv, run_dir / "cv_distribution.txt")
 
-    run_visualizations(config, grid_search.best_estimator_, X, y, groups, pathologies, datasets, cv, run_dir)
+    run_visualizations(config, grid_search.best_estimator_, X_search, y, groups, pathologies, datasets, cv, run_dir)
 
     if config.get("n_repeats", 0) > 0:
         n_splits = config.get("cv").get_n_splits() if hasattr(config.get("cv"), "get_n_splits") else 10
         df_repeated = repeated_cv_evaluation(
             grid_search.best_estimator_,
-            X,
+            X_search,
             y,
             groups,
             n_splits=n_splits,
             n_repeats=config.get("n_repeats"),
         )
         df_repeated.to_csv(run_dir / "repeated_cv.csv", index=False)
-        print(f"Repeated CV UAR: {df_repeated["UAR"].mean():.4f} ± {df_repeated["UAR"].std():.4f}")
+        print(f"Repeated CV UAR: {df_repeated['UAR'].mean():.4f} ± {df_repeated['UAR'].std():.4f}")
 
 
 if __name__ == "__main__":
