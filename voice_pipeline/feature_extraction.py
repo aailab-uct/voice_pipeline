@@ -335,7 +335,7 @@ class TimeDomainFeaturesExtractor(FeatureExtractor):
         X_out = []
         for row in X:
             x = row[0]
-            sex = normalize_sex(row[self.sex_col] if self.sex_col is not None else None)
+            sex = normalize_sex(row[self.sex_col]) if self.sex_col is not None else None
             fmin, fmax = f0_range_for_sex(sex)
             features = self.cached_extraction(x, fmin=fmin, fmax=fmax, sr=self.sr)
             mask = [
