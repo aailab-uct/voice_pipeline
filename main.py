@@ -157,13 +157,18 @@ def build_scoring(scoring_mode: str):
         If ``scoring_mode`` is unknown.
     """
     if scoring_mode == "multimetric":
+        def _cm_value(row, col):
+            def scorer(yt, yp):
+                return confusion_matrix(yt, yp)[row, col]
+            return scorer
+
         return {
             "uar": make_scorer(balanced_accuracy_score),
             "accuracy": make_scorer(accuracy_score),
-            "TP": make_scorer(lambda yt, yp: confusion_matrix(yt, yp)[1, 1]),
-            "TN": make_scorer(lambda yt, yp: confusion_matrix(yt, yp)[0, 0]),
-            "FP": make_scorer(lambda yt, yp: confusion_matrix(yt, yp)[0, 1]),
-            "FN": make_scorer(lambda yt, yp: confusion_matrix(yt, yp)[1, 0]),
+            "TP": make_scorer(_cm_value(1, 1)),
+            "TN": make_scorer(_cm_value(0, 0)),
+            "FP": make_scorer(_cm_value(0, 1)),
+            "FN": make_scorer(_cm_value(1, 0)),
             "roc_auc": make_scorer(roc_auc_score, response_method="predict_proba"),
         }
     if scoring_mode == "accuracy_only":
