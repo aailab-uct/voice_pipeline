@@ -261,7 +261,6 @@ class TimeDomainFeaturesExtractor(FeatureExtractor):
         use_hnr=True,
         use_jitter=True,
         use_shimmer=True,
-        use_zcr=True,
         use_entropy=True,
         use_skewness=True,
         sex_col=None,
@@ -278,7 +277,6 @@ class TimeDomainFeaturesExtractor(FeatureExtractor):
         self.use_hnr = use_hnr
         self.use_jitter = use_jitter
         self.use_shimmer = use_shimmer
-        self.use_zcr = use_zcr
         self.use_entropy = use_entropy
         self.use_skewness = use_skewness
         self.sex_col = sex_col
