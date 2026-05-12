@@ -44,19 +44,19 @@ def _compute_number_per_class(
 
     if sampling_strategy == "auto":
         max_count = max(counts)
-        new_counts = {cls: max_count for cls in classes}
-    elif isinstance(sampling_strategy, dict) or isinstance(sampling_strategy, list):
+        new_counts = {cls: max_count for cls in unique}
+    elif isinstance(sampling_strategy, (dict, list)):
         values = sampling_strategy.values() if isinstance(sampling_strategy, dict) else sampling_strategy
         if all(isinstance(v, int) for v in values):
-            new_counts = {cls: sampling_strategy[cls] for cls in classes}
+            new_counts = {cls: sampling_strategy[cls] for cls in unique}
         elif all(isinstance(v, float) for v in values):
-            new_counts = {cls: int(old_counts[cls] * sampling_strategy[cls]) for cls in classes}
+            new_counts = {cls: int(old_counts[cls] * sampling_strategy[cls]) for cls in unique}
         else:
             raise ValueError("sampling_strategy values must be all int or all float")
     elif isinstance(sampling_strategy, int):
-        new_counts = {cls: sampling_strategy for cls in classes}
+        new_counts = {cls: sampling_strategy for cls in unique}
     elif isinstance(sampling_strategy, float):
-        new_counts = {cls: int(max(counts) * sampling_strategy) for cls in classes}
+        new_counts = {cls: int(max(counts) * sampling_strategy) for cls in unique}
     else:
         raise ValueError("String sampling_strategy not supported")
 
